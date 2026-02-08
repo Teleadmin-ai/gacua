@@ -372,13 +372,73 @@ curl -s -X POST "$URL/v1/chat/completions" ...
   "Clique sur le bouton Envoyer"
 ```
 
-### Conseils pour l'orchestrateur (LLM externe)
+### Architecture orchestrateur / executeur
 
-- **Penser pour l'agent** : l'orchestrateur doit avoir une representation mentale de l'ecran
-  et decider quelles etapes envoyer, meme sans voir les screenshots
+L'intelligence est dans **l'orchestrateur** (LLM externe comme Claude), pas dans Gemini.
+Gemini est un executeur aveugle — il voit l'ecran et clique ou tape la ou on lui dit.
+L'orchestrateur est le cerveau qui planifie, observe et s'adapte.
+
+```
+┌─────────────────────────────────────────────────────┐
+│              ORCHESTRATEUR (Claude, GPT, etc.)       │
+│                                                      │
+│  1. Charge une "recette" (sequence de prompts)       │
+│  2. Envoie etape 1 a GACUA                          │
+│  3. Lit la reponse texte (description de l'ecran)    │
+│  4. Optionnel : fetch screenshot_url pour VOIR       │
+│  5. Adapte l'etape suivante si besoin                │
+│  6. Envoie etape 2, etc.                             │
+│  7. Sauvegarde/ameliore la recette si ca a marche    │
+│                                                      │
+└──────────────┬──────────────────────────────────────┘
+               │  API /v1/chat/completions
+               ▼
+┌─────────────────────────────────────────────────────┐
+│              GACUA (Gemini executeur)                 │
+│                                                      │
+│  - Recoit UNE instruction simple                     │
+│  - Screenshot → Planning → Grounding → Execute       │
+│  - Retourne : texte + screenshot_url                 │
+│  - Ne memorise rien entre les sessions               │
+│                                                      │
+└─────────────────────────────────────────────────────┘
+```
+
+### Recettes (prompts qui marchent)
+
+L'orchestrateur doit maintenir une bibliotheque de **recettes** — des sequences de prompts
+testes et valides pour des taches courantes. Chaque recette est amelioree au fil du temps.
+
+Principes :
+- **Etre le plus explicite possible** dans chaque prompt ("Clique sur le champ Objet" > "Remplis le mail")
+- **S'appuyer sur la description textuelle** que GACUA retourne (il decrit ce qu'il voit a l'ecran)
+- **Fetcher le screenshot** quand la description n'est pas suffisante pour decider
+- **Adapter dynamiquement** : si l'ecran n'est pas dans l'etat attendu, ajuster le prompt suivant
+- **Sauvegarder les recettes qui marchent** pour les reutiliser et les raffiner
+- **Ne pas essayer de tout faire en un prompt** : decomposer, toujours decomposer
+
+Exemple de recette "Envoyer un email Gmail" :
+```
+1. "Ouvre le navigateur et va sur gmail.com"
+2. "Clique sur l icone profil en haut a droite et selectionne le compte {email}"
+   → Si deja le bon compte : skip
+3. "Clique sur Nouveau message"
+4. "Dans le champ destinataire, tape {to} et appuie sur Entree"
+5. "Clique sur le champ Objet et tape: {subject}"
+6. "Clique dans le corps du mail et tape: {body}"
+7. "Clique sur le bouton Envoyer"
+```
+
+Chaque etape retourne du texte + un screenshot. L'orchestrateur verifie que l'action a reussi
+avant de passer a la suivante. Si un ecran inattendu apparait (popup, CAPTCHA, erreur),
+l'orchestrateur s'adapte.
+
+### Conseils techniques
+
 - **Une action = un message** : click, type, scroll, etc.
 - **Attendre la reponse** : ne jamais envoyer le message suivant avant d'avoir la reponse
-- **Lire le feedback** : la reponse contient ce que l'agent a fait et vu
+- **Lire le feedback texte** : GACUA decrit ce qu'il voit — c'est la source principale d'info
+- **Fetcher le screenshot** : quand le texte ne suffit pas, l'orchestrateur peut voir l'ecran
 - **Flash suffit** : pour des etapes simples et atomiques, Flash est aussi fiable que Pro
 - **~30s par etape** : 2 appels API Gemini (planning + grounding) + execution
 
