@@ -5,7 +5,7 @@
  */
 
 import type { Part } from '@google/genai';
-import { AuthType, Config, ApprovalMode } from '@gacua/gemini-cli-core';
+import { AuthType, Config, ApprovalMode, closeAllMcpClients } from '@gacua/gemini-cli-core';
 import { getAuthType } from '../../auth/gemini.js';
 import {
   type AgentInput,
@@ -349,6 +349,11 @@ export async function runComputerUseAgent(
     setSessionStatus(
       'error',
       error instanceof Error ? error.message : String(error),
+    );
+  } finally {
+    // Close MCP connections opened during config.initialize() to prevent leaks
+    await closeAllMcpClients().catch((err) =>
+      agentInterfaceLogger.warn({ err }, 'Failed to close MCP clients'),
     );
   }
 }

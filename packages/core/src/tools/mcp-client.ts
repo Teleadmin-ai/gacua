@@ -75,6 +75,11 @@ export enum MCPDiscoveryState {
 const serverStatuses: Map<string, MCPServerStatus> = new Map();
 
 /**
+ * Map to track active MCP client connections for cleanup
+ */
+const activeMcpClients: Map<string, Client> = new Map();
+
+/**
  * Track the overall MCP discovery state
  */
 let mcpDiscoveryState: MCPDiscoveryState = MCPDiscoveryState.NOT_STARTED;
@@ -112,6 +117,22 @@ export function removeMCPStatusChangeListener(
   if (index !== -1) {
     statusChangeListeners.splice(index, 1);
   }
+}
+
+/**
+ * Close all active MCP client connections.
+ * Call this after agent runs to prevent connection leaks.
+ */
+export async function closeAllMcpClients(): Promise<void> {
+  for (const [serverName, client] of activeMcpClients) {
+    try {
+      await client.close();
+    } catch {
+      // Ignore close errors
+    }
+    updateMCPServerStatus(serverName, MCPServerStatus.DISCONNECTED);
+  }
+  activeMcpClients.clear();
 }
 
 /**
@@ -412,6 +433,9 @@ export async function connectAndDiscover(
 
     // If we found anything, the server is connected
     updateMCPServerStatus(mcpServerName, MCPServerStatus.CONNECTED);
+
+    // Track the client for later cleanup
+    activeMcpClients.set(mcpServerName, mcpClient);
 
     // Register any discovered tools
     for (const tool of tools) {
