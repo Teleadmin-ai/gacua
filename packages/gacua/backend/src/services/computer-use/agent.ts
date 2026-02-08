@@ -32,6 +32,10 @@ import {
 } from './tool-computer/index.js';
 import pino from 'pino';
 
+/** Number of recent turns whose screenshot images are kept in context.
+ *  Older turns' images are stripped and replaced with text placeholders. */
+const KEEP_RECENT_IMAGES = 3;
+
 export type AgentInput =
   | string
   | {
@@ -221,6 +225,69 @@ class ContextManager {
 
   getHistory(): Content[] {
     return this.history;
+  }
+
+  /**
+   * Returns the history with inlineData image parts stripped from all but
+   * the last `keepRecentImages` user messages that contain images.
+   * Stripped images are replaced with a single text placeholder.
+   * The internal history is NOT modified — only a partial copy is returned.
+   */
+  getStrippedHistory(keepRecentImages: number): Content[] {
+    // Find indices of user Contents that have inlineData parts
+    const userIndicesWithImages: number[] = [];
+    for (let i = 0; i < this.history.length; i++) {
+      if (
+        this.history[i].role === 'user' &&
+        this.history[i].parts?.some((part) => 'inlineData' in part)
+      ) {
+        userIndicesWithImages.push(i);
+      }
+    }
+
+    // Determine which indices to strip (all but the last N)
+    const indicesToStrip = new Set(
+      userIndicesWithImages.slice(
+        0,
+        Math.max(0, userIndicesWithImages.length - keepRecentImages),
+      ),
+    );
+
+    // Nothing to strip → return original
+    if (indicesToStrip.size === 0) {
+      return this.history;
+    }
+
+    // Build stripped copy (only copy Content objects that need modification)
+    return this.history.map((content, index) => {
+      if (!indicesToStrip.has(index)) {
+        return content;
+      }
+
+      // Replace inlineData parts with a single placeholder
+      let imageCount = 0;
+      const strippedParts: Part[] = [];
+      for (const part of content.parts ?? []) {
+        if ('inlineData' in part) {
+          imageCount++;
+        } else {
+          if (imageCount > 0) {
+            strippedParts.push({
+              text: `[${imageCount} screenshot crop(s) removed from history]`,
+            });
+            imageCount = 0;
+          }
+          strippedParts.push(part);
+        }
+      }
+      if (imageCount > 0) {
+        strippedParts.push({
+          text: `[${imageCount} screenshot crop(s) removed from history]`,
+        });
+      }
+
+      return { role: content.role, parts: strippedParts };
+    });
   }
 }
 
@@ -486,12 +553,23 @@ export async function runAgent(
           userParts.push({ text: extraPrompt });
         }
 
-        const requestContents = contextManager
-          .appendContent({
-            role: 'user',
-            parts: userParts,
-          })
-          .getHistory();
+        contextManager.appendContent({
+          role: 'user',
+          parts: userParts,
+        });
+        const requestContents = contextManager.getStrippedHistory(KEEP_RECENT_IMAGES);
+
+        // Log image stripping activity
+        const fullImageCount = contextManager.getHistory()
+          .reduce((n, c) => n + (c.parts?.filter((p) => 'inlineData' in p).length ?? 0), 0);
+        const sentImageCount = requestContents
+          .reduce((n, c) => n + (c.parts?.filter((p) => 'inlineData' in p).length ?? 0), 0);
+        if (fullImageCount !== sentImageCount) {
+          turnLogger.info(
+            { fullImageCount, sentImageCount, stripped: fullImageCount - sentImageCount },
+            'Stripped old screenshot images from context',
+          );
+        }
 
         const responseStream = await contentGenerator.generateContentStream(
           {

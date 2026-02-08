@@ -361,6 +361,18 @@ click app, click 4, click 2, click ×, click 3, click =, computer_done) en ~2 mi
 - Le step number est tracke par session dans un `Map<sessionId, number>` pour detecter le 1er appel
 - Les regles sont declaratives (condition + message) → facile a etendre
 
+### 17. Stripping des anciens screenshots dans le contexte agent
+- **Fichier** : `packages/gacua/backend/src/services/computer-use/agent.ts`
+- Chaque tour ajoutait 3 crops (768x768 PNG base64) au contexte envoye a Gemini
+- Apres N tours, le contexte contenait 3*N images → `planningMs` grimpait lineairement
+- **Fix** : `ContextManager.getStrippedHistory(keepRecentImages)` retourne une copie
+  ou seuls les 3 derniers tours gardent leurs images. Les anciens tours gardent le texte
+  (description screenshot, model response, function calls) mais les `inlineData` sont
+  remplaces par un placeholder `"[3 screenshot crop(s) removed from history]"`
+- L'historique interne complet est preserve (pas de perte de donnees)
+- Constante `KEEP_RECENT_IMAGES = 3` configurable en haut du fichier
+- Log de diagnostic a chaque tour : `fullImageCount`, `sentImageCount`, `stripped`
+
 ## Commandes
 
 ```bash
