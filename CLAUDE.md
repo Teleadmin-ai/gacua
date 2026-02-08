@@ -471,104 +471,155 @@ L'orchestrateur est le cerveau qui planifie les grandes etapes, observe et s'ada
 ```
 
 **Note** : Claude Code (moi) est l'orchestrateur principal pour le moment.
-Quand Romain demande de piloter GACUA, je DOIS suivre le protocole complet :
-message neutre initial, fetch systematique des screenshots, adaptation dynamique.
 A terme, OpenClaw prendra ce role depuis un serveur distant.
 
-### Recettes (prompts qui marchent)
+### Protocole orchestrateur — OBLIGATOIRE
 
-L'orchestrateur doit maintenir une bibliotheque de **recettes** — des sequences de prompts
-testes et valides pour des taches courantes. Chaque recette est amelioree au fil du temps.
+Quand Romain demande de piloter GACUA, je DOIS suivre ce protocole complet.
+Ce n'est PAS une liste de conseils, c'est la procedure de travail.
+
+#### Phase 1 — OBSERVER la scene
+
+Avant toute action, l'orchestrateur DOIT voir l'ecran pour comprendre l'etat initial.
+
+```
+1. Envoyer un message neutre a GACUA (trigger screenshot sans action)
+   → "Bonjour, au prochain message je t enverrai tes instructions."
+2. Recuperer la reponse + screenshot_url
+3. Fetcher le screenshot (GET {screenshot_url}?token=T)
+4. Analyser l'image : quelles fenetres sont ouvertes ? quel etat ?
+```
+
+#### Phase 2 — PLANIFIER la sequence complete
+
+A partir du screenshot initial, l'orchestrateur visualise la scene complete :
+- Quel est l'etat actuel du bureau/app ?
+- Quelles etapes sont necessaires pour atteindre l'objectif ?
+- Dans quel ordre ? Quels sont les points de verification ?
+
+L'orchestrateur dresse la **liste complete des messages** qu'il va envoyer,
+du premier clic jusqu'a la fin. C'est la "recette" pour cette tache.
+
+```
+Exemple : envoyer un email Gmail
+  Etat initial : bureau Windows, Chrome ouvert sur Google
+  Plan :
+    1. "Va sur gmail.com dans la barre d adresse"
+    2. "Clique sur Nouveau message"
+    3. "Dans le champ destinataire, tape {to} et appuie sur Entree"
+    4. "Clique sur le champ Objet et tape: {subject}"
+    5. "Clique dans le corps du mail et tape: {body}"
+    6. "Clique sur le bouton Envoyer"
+```
+
+#### Phase 3 — EXECUTER pas a pas avec verification
+
+Pour chaque etape du plan :
+
+```
+1. Envoyer le message a GACUA (POST /v1/chat/completions)
+2. Attendre la reponse (texte + screenshot_url + metrics)
+3. Fetcher le screenshot — OBLIGATOIRE, c'est la source de verite
+4. Verifier sur le screenshot que l'action a reussi
+5. Lire les metrics (temps par phase, actions effectuees)
+```
+
+**Le screenshot est la verite.** Le texte de GACUA est un complement utile mais
+l'orchestrateur ne doit JAMAIS se fier uniquement au texte pour decider.
+
+#### Phase 4 — ADAPTER en fonction des imprevus
+
+Apres chaque verification screenshot, l'orchestrateur DOIT re-evaluer le plan :
+
+- **Action reussie** → passer a l'etape suivante du plan
+- **Action echouee** (mauvais clic, mauvais ecran) → reformuler le prompt et reessayer
+- **Imprevus** (popup, CAPTCHA, erreur, fenetre inattendue) → adapter le plan :
+  - Ajouter des etapes (fermer un popup, accepter un cookie)
+  - Retirer des etapes (si un etat est deja atteint, skip)
+  - Changer l'approche (si un chemin est bloque, trouver un autre)
+
+```
+Exemple d'adaptation :
+  Plan initial : cliquer sur "Nouveau message"
+  Screenshot : popup "Activer les notifications" bloque l'ecran
+  Adaptation : ajouter etape "Clique sur Non merci" avant de continuer le plan
+```
+
+**La liste d'actions n'est PAS figee.** L'orchestrateur la re-evalue a chaque etape.
+C'est la difference entre un script rigide et un agent intelligent.
+
+### Recettes (prompts testes et valides)
+
+Une recette est une sequence de prompts validee pour une tache courante.
+Les recettes sont ameliorees au fil du temps grace aux metrics et aux retours.
 
 Principes :
-- **Etre le plus explicite possible** dans chaque prompt ("Clique sur le champ Objet" > "Remplis le mail")
-- **Toujours fetcher le screenshot apres chaque action** — c'est SYSTEMATIQUE, pas optionnel.
-  L'orchestrateur DOIT voir l'ecran pour verifier que l'action a reussi avant de continuer.
-  Le texte de GACUA est un complement, mais la verite c'est le screenshot.
-- **Adapter dynamiquement** : si l'ecran n'est pas dans l'etat attendu, ajuster le prompt suivant
+- **Etre explicite** dans chaque prompt ("Clique sur le champ Objet" > "Remplis le mail")
+- **Utiliser les metrics** pour comparer les variantes de recettes (temps total, nb de tours)
 - **Sauvegarder les recettes qui marchent** pour les reutiliser et les raffiner
-- **Decomposer les workflows longs** : Flash gere les instructions completes, mais pour 5+ etapes, decomposer reste plus fiable
+- **Flash gere des instructions multi-etapes** : pour des taches simples, un seul message suffit
+  (ex: "Ouvre la calculatrice et fais 42×3" → Flash fait 8 actions en autonome)
+- **Decomposer les workflows longs** : pour 5+ etapes avec verification intermediaire,
+  envoyer message par message
 
 Exemple de recette "Envoyer un email Gmail" :
 ```
 1. "Ouvre le navigateur et va sur gmail.com"
-2. "Clique sur l icone profil en haut a droite et selectionne le compte {email}"
-   → Si deja le bon compte : skip
-3. "Clique sur Nouveau message"
-4. "Dans le champ destinataire, tape {to} et appuie sur Entree"
-5. "Clique sur le champ Objet et tape: {subject}"
-6. "Clique dans le corps du mail et tape: {body}"
-7. "Clique sur le bouton Envoyer"
+   → Verifier : page Gmail visible
+2. "Clique sur Nouveau message"
+   → Verifier : fenetre de composition ouverte
+3. "Dans le champ destinataire, tape {to} et appuie sur Entree"
+   → Verifier : adresse affichee dans le champ
+4. "Clique sur le champ Objet et tape: {subject}"
+   → Verifier : objet visible
+5. "Clique dans le corps du mail et tape: {body}"
+   → Verifier : texte visible dans le corps
+6. "Clique sur le bouton Envoyer"
+   → Verifier : message "Message envoye" ou boite de reception
 ```
 
-Chaque etape retourne du texte + un screenshot. L'orchestrateur verifie que l'action a reussi
-avant de passer a la suivante. Si un ecran inattendu apparait (popup, CAPTCHA, erreur),
-l'orchestrateur s'adapte.
-
-### Boucle d'execution de l'orchestrateur
-
-**Etape 0 — Screenshot initial (AVANT toute action) :**
-```
-1. Envoyer : "Bonjour, je suis ton orchestrateur. Au prochain message je t enverrai tes instructions."
-2. Recuperer la reponse + screenshot_url (le screenshot est pris automatiquement a chaque tour)
-3. Fetcher le screenshot pour voir l'etat actuel de l'ecran
-4. A partir de la, decider quelles etapes envoyer
-```
-
-Ce message ne demande RIEN a l'agent — pas de description, pas d'action. Il sert uniquement
-a trigger le screenshot automatique. Evite "dis moi ce que tu vois" car l'agent perdrait du
-temps a decrire l'ecran (et risquerait de cliquer quelque part). L'orchestrateur va analyser
-le screenshot lui-meme juste apres.
-
-**Etapes suivantes — Pour chaque action de la recette :**
-```
-1. Envoyer le prompt a GACUA (POST /v1/chat/completions)
-2. Lire la reponse texte (description de ce que l'agent a fait)
-3. Fetcher le screenshot (GET {screenshot_url}?token=T) — OBLIGATOIRE
-4. Analyser le screenshot pour verifier que l'action a reussi
-5. Si OK → passer a l'etape suivante
-   Si KO → adapter le prompt et reessayer, ou signaler l'echec
-```
-
-Le screenshot est la **source de verite**. Le texte de GACUA est un complement utile
-mais l'orchestrateur ne doit jamais se fier uniquement au texte pour decider.
-
-### Exemple reel — Ouvrir la calculatrice et calculer 42×3
+### Exemple reel — Ouvrir la calculatrice (avec metrics)
 
 ```bash
-# Etape 1 : ouvrir et calculer
 curl -s -X POST "$URL/v1/chat/completions" -H "Authorization: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"model":"gacua-gemini-3-flash","session_id":"'$SESSION'",
-       "messages":[{"role":"user","content":"Ouvre le menu Demarrer, tape calculatrice, lance l app, puis fais 42 multiplier par 3 et appuie sur egal"}]}'
+       "messages":[{"role":"user","content":"Ouvre le menu Demarrer, tape calculatrice et lance l app"}]}'
 
-# Reponse (~2 min, Flash fait 8 tours autonomes) :
+# Reponse (~44s, 3 tours) :
 {
   "choices": [{
     "message": {
-      "content": "Actions performed:\n1. click on \"Windows Start button\"\n2. type \"calculatrice\"\n3. click on \"Calculatrice app\"\n4. click on \"Button 4\"\n5. click on \"Button 2\"\n6. click on \"Multiplication button\"\n7. click on \"Button 3\"\n8. click on \"Equals button\"\n9. computer_done({\"summary\":\"42 × 3 = 126\"})"
+      "content": "Actions performed:\n1. click on \"Windows Start button\"\n2. type \"calculatrice\"\n3. computer_done({\"summary\":\"Calculatrice ouverte\"})"
     }
   }],
-  "session_id": "2026-02-08T...",
-  "screenshot_url": "/images/2026-02-08T.../...screenshot.png"
+  "screenshot_url": "/images/.../...screenshot.png",
+  "metrics": {
+    "turns": [
+      {"turn":1, "screenshotMs":693, "planningMs":6732,  "executionMs":3620, "totalMs":11045,
+       "actions":["computer_click(...)"]},
+      {"turn":2, "screenshotMs":588, "planningMs":13474, "executionMs":5392, "totalMs":19454,
+       "actions":["computer_type(...)"]},
+      {"turn":3, "screenshotMs":508, "planningMs":12732, "executionMs":0,    "totalMs":13240,
+       "actions":["computer_done"]}
+    ],
+    "totalMs": 43739
+  }
 }
 ```
 
-Flash enchaine : click Demarrer → type → click app → click 4 → click 2 → click × → click 3
-→ click = → `computer_done`. Tout en autonome, une seule requete API.
+Lecture des metrics : le bottleneck est `planningMs` (6-13s = temps de reflexion Gemini).
+`screenshotMs` (500-700ms) et `executionMs` (3-5s) sont rapides.
 
 ### Conseils techniques
 
-- **Instructions completes** : Flash gere des instructions multi-etapes en autonome
-  ("ouvre la calculatrice et fais 42×3" → 8 actions en ~2 min)
-- **computer_done** : Flash appelle `computer_done` quand il a fini. Pas besoin de lui dire
-  explicitement dans le prompt, le rappel est injecte automatiquement apres chaque screenshot
-- **Toujours verifier le screenshot** : apres CHAQUE message envoye, sans exception
+- **computer_done** : Flash appelle `computer_done` quand il a fini (rappel injecte automatiquement)
+- **Toujours verifier le screenshot** : apres CHAQUE message, c'est la source de verite
 - **Attendre la reponse** : ne jamais envoyer le message suivant avant d'avoir la reponse
-- **Flash suffit** : pour la plupart des taches, Flash est fiable depuis les fixes
-- **~30s par action** : chaque tour = screenshot + planning API + grounding API + execution
+- **Flash suffit** : fiable pour la plupart des taches depuis les fixes
+- **Utiliser les metrics** : `planningMs` = temps Gemini, `screenshotMs` = temps MCP, `executionMs` = grounding + action
+- **~10-20s par tour** : screenshot (~0.5s) + planning (~7-13s) + execution (~3-5s)
 - **Timeout MCP 30s** : si la connexion SSE tombe, le run echoue en 30s max (pas 10 min)
-- **Logs de timing** : chaque phase est loguee avec sa duree (voir modif 14)
 
 ### Screenshots — Stockage et acces
 
@@ -587,28 +638,37 @@ Les screenshots sont stockes dans le dossier de session :
 Les messages persistants referent aux images via `internal://{sessionId}/{fileName}`.
 Le frontend web affiche les screenshots dans la conversation.
 
-### Screenshot dans la reponse API (IMPLEMENTE)
+### Reponse API enrichie (screenshot + metrics)
 
-La reponse de `/v1/chat/completions` inclut un champ `screenshot_url` pointant vers
-le dernier screenshot complet pris par l'agent apres execution de l'action.
+La reponse de `/v1/chat/completions` inclut :
+- `screenshot_url` — dernier screenshot complet pris par l'agent
+- `metrics` — timings detailles par tour (voir modif 14, 15)
 
 ```json
 {
-  "choices": [{ "message": { "content": "..." } }],
+  "choices": [{ "message": { "content": "Actions performed:\n1. click...\n2. type...\n3. computer_done(...)" } }],
   "session_id": "2026-02-08T...",
-  "screenshot_url": "/images/2026-02-08T.../2026-02-08T..._screenshot.png"
+  "screenshot_url": "/images/2026-02-08T.../...screenshot.png",
+  "metrics": {
+    "turns": [
+      {"turn":1, "screenshotMs":693, "planningMs":6732, "executionMs":3620, "totalMs":11045, "actions":[...]},
+      {"turn":2, "screenshotMs":588, "planningMs":13474, "executionMs":5392, "totalMs":19454, "actions":[...]}
+    ],
+    "totalMs": 43739
+  }
 }
 ```
 
-L'orchestrateur LLM peut alors :
-1. Recuperer l'image via `GET {screenshot_url}?token=T`
-2. L'analyser avec son propre modele vision (Claude, GPT, etc.)
-3. Decider de la prochaine etape en connaissance de cause
+L'orchestrateur utilise ces donnees pour :
+1. **Verifier** : `GET {screenshot_url}?token=T` → analyser l'image avec son propre modele vision
+2. **Mesurer** : comparer `totalMs` entre recettes pour optimiser les workflows
+3. **Diagnostiquer** : `planningMs` eleve = Gemini reflechit trop, `screenshotMs` eleve = MCP lent
+4. **Adapter** : si `metrics.turns` montre trop de tours, simplifier l'instruction
 
 **Fichier** : `packages/gacua/backend/src/api/openai-compat.ts`
-- `collectAgentResponse()` track le dernier screenshot depuis les `persistent_message` events
-- Filtre : seuls les screenshots complets (`_screenshot.png`), pas les crops (`_vc0`, `_vc1`, etc.)
-- Disponible en mode non-streaming et streaming (dans le dernier chunk `finish_reason: 'stop'`)
+- `collectAgentResponse()` track screenshot + metrics depuis les events
+- Filtre screenshots : seuls les complets (`_screenshot.png`), pas les crops
+- Disponible en mode non-streaming et streaming (dans le dernier chunk)
 
 ## Bugs connus / TODO
 
