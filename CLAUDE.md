@@ -114,44 +114,107 @@ Ne PAS remplacer Gemini mais **ajouter** d'autres providers :
 - Un GPU local avec un modele vision (ex: Qwen-VL, LLaVA) pourrait accelerer le grounding
 - Garder Gemini comme option par defaut
 
-## API externe (objectif Teleadmin)
+## API OpenAI-compatible (IMPLEMENTEE)
 
-### Besoin :
-Exposer une **API compatible OpenAI** pour permettre a un agent LLM externe de
-piloter GACUA par messages texte. L'agent externe n'a pas besoin de voir les
-screenshots — il envoie des ordres en langage naturel et recoit du feedback texte.
+**Fichier** : `packages/gacua/backend/src/api/openai-compat.ts`
+**Monte dans** : `server.ts` via `app.use(apiRouter)`
 
-### Concept :
+Permet a un agent LLM externe de piloter GACUA par messages texte,
+sans interface graphique. L'agent envoie des ordres en langage naturel
+et recoit du feedback texte au format OpenAI.
+
+### Auth
+
+Supporte les deux modes :
+- `Authorization: Bearer <token>` (standard OpenAI)
+- `?token=<token>` (compatibilite existante)
+
+### Modeles exposes
+
+| ID API | Modele Gemini reel |
+|--------|--------------------|
+| `gacua-gemini-3-pro` | gemini-3-pro-preview |
+| `gacua-gemini-3-flash` | gemini-3-flash-preview |
+
+Les noms Gemini natifs sont aussi acceptes directement.
+
+### Endpoints /v1/*
+
+| Methode | Endpoint | Description |
+|---------|----------|-------------|
+| GET | /v1/models | Liste les modeles disponibles |
+| GET | /v1/sessions | Liste les sessions existantes |
+| POST | /v1/sessions | Creer une session (body: `{name?, model?}`) |
+| DELETE | /v1/sessions/:id | Supprimer une session (+ images + messages) |
+| GET | /v1/sessions/:id/messages | Historique texte d'une session |
+| POST | /v1/chat/completions | Envoyer un message, recevoir le feedback |
+
+### POST /v1/chat/completions
+
+```json
+// Request
+{
+  "model": "gacua-gemini-3-pro",
+  "session_id": "2025-02-08T...",   // optionnel, auto-cree si absent
+  "messages": [
+    { "role": "user", "content": "Ouvre Firefox et va sur google.com" }
+  ],
+  "stream": false                    // true pour SSE streaming
+}
+
+// Response (non-streaming)
+{
+  "id": "chatcmpl-xxx",
+  "object": "chat.completion",
+  "model": "gacua-gemini-3-pro",
+  "choices": [{
+    "index": 0,
+    "message": { "role": "assistant", "content": "J'ai ouvert Firefox..." },
+    "finish_reason": "stop"
+  }],
+  "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0 },
+  "session_id": "2025-02-08T..."
+}
 ```
-Agent LLM externe (Claude, GPT, etc.)
-    │
-    │  POST /v1/chat/completions  (API OpenAI-compatible)
-    │  { messages: [{ role: "user", content: "Ouvre Firefox et va sur google.com" }] }
-    │
-    ▼
-GACUA API Layer (a creer)
-    │
-    │  1. Recoit le message texte
-    │  2. Cree/reprend une session GACUA
-    │  3. Envoie au WebSocket interne
-    │  4. GACUA fait screenshot → planning → grounding → execution
-    │  5. Retourne le feedback texte (ce que GACUA a fait/vu)
-    │
-    ▼
-GACUA Agent (Gemini)
-    │
-    ▼
-MCP Computer Server → Souris/Clavier/Ecran
+
+### Flow interne
+
+```
+1. Parse requete OpenAI
+2. Si pas de session_id → sessionManager.createSession()
+3. Extraire le dernier message user
+4. Appeler runComputerUseAgent(sessionId, input, model, emitEvent) directement
+5. emitEvent callback collecte le texte (stream_message + persistent_message)
+6. Retourner le texte au format OpenAI (ou streamer en SSE)
 ```
 
-### Endpoints a creer :
-- `POST /v1/chat/completions` — Envoyer un ordre, recevoir le feedback
-- `GET /v1/models` — Lister les modeles disponibles
-- Support streaming (SSE) pour le feedback en temps reel
+### Exemples curl
 
-### Fichiers a modifier :
-- `packages/gacua/backend/src/server.ts` — Ajouter les routes /v1/*
-- Creer `packages/gacua/backend/src/api/openai-compat.ts` — Adapter
+```bash
+# Lister modeles
+curl http://localhost:3000/v1/models -H "Authorization: Bearer TOKEN"
+
+# Lister sessions
+curl http://localhost:3000/v1/sessions -H "Authorization: Bearer TOKEN"
+
+# Creer session
+curl -X POST http://localhost:3000/v1/sessions \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"test","model":"gemini-3-pro-preview"}'
+
+# Chat completion (attention: execute des actions sur le PC!)
+curl -X POST http://localhost:3000/v1/chat/completions \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gacua-gemini-3-pro","messages":[{"role":"user","content":"Quelle heure est-il?"}]}'
+
+# Chat completion avec streaming SSE
+curl -X POST http://localhost:3000/v1/chat/completions \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gacua-gemini-3-pro","stream":true,"messages":[{"role":"user","content":"Ouvre le bloc-notes"}]}'
+```
 
 ## Modifications Teleadmin
 
@@ -186,6 +249,16 @@ Gemini 3 exige que les `thoughtSignature` soient preserves dans l'historique des
 - **Fichier** : `packages/gacua/frontend/src/App.tsx` — Default model gemini-3-pro-preview
 - **Fichier** : `packages/gacua/frontend/src/components/Input.tsx` — Selecteur avec Gemini 3 Pro/Flash
 
+### 6. Suppression de sessions (deleteSession)
+- **Fichier** : `packages/gacua/backend/src/repository/session.ts` — `deleteSession()` avec protection path traversal
+- **Fichier** : `packages/gacua/backend/src/services/session/manager.ts` — `deleteSession()` avec verification d'existence
+- **Fichier** : `packages/gacua/backend/src/server.ts` — `DELETE /api/sessions/:id`
+- **Fichier** : `packages/gacua/backend/src/api/openai-compat.ts` — `DELETE /v1/sessions/:id`
+
+### 7. Bouton suppression sessions (frontend)
+- **Fichier** : `packages/gacua/frontend/src/components/Sessions.tsx` — Icone poubelle sur chaque session
+- **Fichier** : `packages/gacua/frontend/src/App.tsx` — Callback `deleteSession` (appel DELETE /api/sessions/:id)
+
 ## Commandes
 
 ```bash
@@ -217,20 +290,59 @@ GACUA reutilise la config de Gemini CLI :
 
 ## API REST existante (avec token)
 
+### API interne (/api/*)
+
 | Methode | Endpoint | Description |
 |---------|----------|-------------|
 | GET | /api/health?token=T | Health check |
 | GET | /api/sessions?token=T | Lister les sessions |
 | POST | /api/sessions?token=T | Creer une session |
 | GET | /api/sessions/:id?token=T | Details session |
+| DELETE | /api/sessions/:id?token=T | Supprimer une session |
 | GET | /api/sessions/:id/messages?token=T | Messages d'une session |
 | GET | /images/:sessionId/:fileName?token=T | Image screenshot |
 | WS | ws://localhost:3000 | WebSocket (streaming commandes/reponses) |
 
+### API OpenAI-compatible (/v1/*) — Bearer ou ?token=
+
+| Methode | Endpoint | Description |
+|---------|----------|-------------|
+| GET | /v1/models | Modeles disponibles |
+| GET | /v1/sessions | Sessions existantes |
+| POST | /v1/sessions | Creer une session |
+| DELETE | /v1/sessions/:id | Supprimer une session |
+| GET | /v1/sessions/:id/messages | Historique texte |
+| POST | /v1/chat/completions | Envoyer un ordre, recevoir le feedback |
+
+## Bugs connus / TODO
+
+### Leak de connexions MCP (TODO)
+Chaque appel a `runComputerUseAgent()` cree un nouveau `Config` → `config.initialize()` →
+`createToolRegistry()` → `discoverAllTools()` → ouvre une **nouvelle connexion SSE** au serveur MCP
+(port 10001) qui n'est **jamais fermee**. La classe `Config` n'a pas de methode `cleanup()`/`close()`.
+
+**Consequence** : les connexions s'accumulent (visible avec `netstat -ano | findstr :10001`).
+Sur des sessions longues, ca peut causer des erreurs `SSE stream disconnected: TypeError: terminated`.
+
+**Solution tentee et revertee** : cacher le Config au niveau module pour reutiliser la connexion MCP.
+**Resultat** : casse completement le controle du PC — les outils MCP deviennent inutilisables apres
+le 1er appel. Le cache Config est INTERDIT — chaque appel DOIT creer un nouveau Config.
+
+**Solution correcte (a implementer)** : ajouter une methode `cleanup()` dans `ToolRegistry`
+(`packages/core/src/tools/tool-registry.ts`) qui ferme les clients MCP, puis l'appeler dans
+`interface.ts` apres `runAgent()` (dans un `finally` block). Necessite aussi d'exposer
+`config.getToolRegistry()` pour y acceder et d'ajouter `cleanup()` dans `Config`.
+
+### Flash 3 : texte parasite dans les reponses
+Gemini 3 Flash emet parfois des chiffres parasites ("0", "2") comme text parts a cote de ses
+function calls et thoughts. Ces chiffres apparaissent dans l'interface web. C'est un comportement
+du modele Flash, pas un bug du code. Pro ne le fait pas.
+
 ## Notes
 
 - Le selecteur de modele est **par session** : changer de modele necessite une nouvelle session
-- Flash est plus rapide mais moins precis pour le grounding
+- Flash est plus rapide mais moins precis pour le grounding (oublie parfois `element_description`)
 - Si erreur "EADDRINUSE" : `netstat -ano | findstr :10001` puis `taskkill /PID <pid> /F` (dans cmd.exe)
 - Les screenshots sont croppes en carres avec 50% de chevauchement pour couvrir tout l'ecran
 - GPU local possible pour le grounding (modele vision leger type Qwen-VL) pour reduire la latence
+- Resolution ecran actuelle : 3072x1728 (screenshots MCP captures a cette resolution)

@@ -444,6 +444,30 @@ function App() {
     }
   }, [selectedSessionId, switchSession]);
 
+  const deleteSession = useCallback(
+    async (sessionId: string) => {
+      try {
+        const url = accessToken
+          ? `/api/sessions/${sessionId}?token=${accessToken}`
+          : `/api/sessions/${sessionId}`;
+        const response = await fetch(url, { method: 'DELETE' });
+        if (response.ok) {
+          // If we just deleted the active session, clear the view
+          if (selectedSessionId === sessionId) {
+            setSelectedSessionId(null);
+            setMessages([]);
+          }
+          await loadSessionsMetadata();
+        } else {
+          console.error('Failed to delete session:', response.status);
+        }
+      } catch (error) {
+        console.error('Error deleting session:', error);
+      }
+    },
+    [accessToken, selectedSessionId, loadSessionsMetadata],
+  );
+
   const startNewChat = () => {
     setSelectedSessionId(null);
     setIsMenuOpen(false);
@@ -473,6 +497,7 @@ function App() {
             setSelectedSessionId(id);
             setIsMenuOpen(false);
           }}
+          onDeleteSession={deleteSession}
           onClose={() => setIsMenuOpen(false)}
         />
       </div>

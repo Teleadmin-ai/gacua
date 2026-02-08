@@ -24,6 +24,7 @@ import {
   validateTokenString,
   getAccessToken,
 } from './auth/token.js';
+import { apiRouter } from './api/openai-compat.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -76,6 +77,9 @@ app.use(
 
 app.use(express.json());
 
+// OpenAI-compatible API (/v1/*)
+app.use(apiRouter);
+
 app.get('/api/health', validateToken, (req, res) => {
   res.json({ message: 'healthy' });
 });
@@ -98,6 +102,20 @@ app.post('/api/sessions', validateToken, async (req, res) => {
   } catch (error) {
     req.log.error({ err: error }, 'Failed to create session');
     res.status(500).json({ error: 'Failed to create session' });
+  }
+});
+
+app.delete('/api/sessions/:id', validateToken, async (req, res) => {
+  try {
+    const sessionId = req.params['id'];
+    await sessionManager.deleteSession(sessionId);
+    res.json({ id: sessionId, deleted: true });
+  } catch (error) {
+    req.log.warn(
+      { sessionId: req.params['id'], err: error },
+      'Failed to delete session',
+    );
+    res.status(404).json({ error: 'Session not found' });
   }
 });
 

@@ -80,6 +80,19 @@ export class SessionRepository {
     repositoryLogger.debug({ sessionId, updates }, 'Session metadata updated');
   }
 
+  async deleteSession(sessionId: string): Promise<void> {
+    const sessionDir = path.join(this.baseDir, sessionId);
+    const resolvedDir = path.resolve(sessionDir);
+
+    // Safety: ensure we only delete inside baseDir
+    if (!resolvedDir.startsWith(path.resolve(this.baseDir) + path.sep)) {
+      throw new Error('Session path is outside of the allowed directory');
+    }
+
+    await fs.rm(resolvedDir, { recursive: true, force: true });
+    repositoryLogger.info({ sessionId }, 'Session deleted from repository');
+  }
+
   async getSession(sessionId: string): Promise<SessionMetadata> {
     try {
       const metadataPath = this.getMetadataFilePath(sessionId);

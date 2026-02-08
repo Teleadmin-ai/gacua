@@ -50,6 +50,14 @@ export class SessionManager {
     return response;
   }
 
+  async deleteSession(sessionId: string): Promise<void> {
+    sessionManagerLogger.info({ sessionId }, 'Deleting session');
+    // Verify the session exists first (throws if not found)
+    await sessionRepository.getSession(sessionId);
+    await sessionRepository.deleteSession(sessionId);
+    sessionManagerLogger.info({ sessionId }, 'Session deleted successfully');
+  }
+
   async getSession(sessionId: string): Promise<SessionMetadata> {
     sessionManagerLogger.debug({ sessionId }, 'Retrieving session metadata');
     const session = await sessionRepository.getSession(sessionId);
