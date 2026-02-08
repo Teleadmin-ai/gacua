@@ -52,12 +52,12 @@ packages/
 Chaque tour d'agent = **2 appels API Gemini** sequentiels :
 
 ```
-1. PLANNING (1er appel API) — agent.ts:485-501
+1. PLANNING (1er appel API) — agent.ts (boucle principale)
    Screenshot ecran → Crop en carres 768x768 → Envoi a Gemini
    Config: temperature=0.2, thinking=true (illimite), tools=[computer_*]
    → Gemini retourne: computer_click(image_id=0, element_description="le bouton X")
 
-2. GROUNDING (2eme appel API) — agent.ts:90-124
+2. GROUNDING (2eme appel API) — agent.ts (fonction groundElement)
    Crop[image_id] + "Click on: le bouton X" → Envoi a Gemini (grounding agent)
    Config: temperature=0.0, thinking=256 tokens, JSON schema response
    System: "You are a UI grounding agent. Return bounding box [ymin,xmin,ymax,xmax] 0-1000"
@@ -91,7 +91,7 @@ Le bottleneck est le temps des 2 appels API + le thinking de Gemini.
 | Vision (images inline base64) | agent.ts | Oui (Claude, OpenAI, Qwen) |
 | Function calling / tools | agent.ts + tool-computer/*.ts | Oui (format different) |
 | Extended thinking | agent.ts (thinkingConfig) | Oui (Claude thinking, o1/o3) |
-| JSON schema output | agent.ts:100-115 | Oui (Claude JSON, OpenAI structured) |
+| JSON schema output | agent.ts (groundElement) | Oui (Claude JSON, OpenAI structured) |
 | thoughtSignature | agent.ts (Gemini 3 specifique) | Non — a supprimer si autre model |
 | Streaming | contentGenerator.ts | Oui (tous les providers) |
 
@@ -173,7 +173,10 @@ Les noms Gemini natifs sont aussi acceptes directement.
     "finish_reason": "stop"
   }],
   "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0 },
-  "session_id": "2026-02-08T..."
+  "session_id": "2026-02-08T...",
+  "screenshot_url": "/images/{sessionId}/{timestamp}_screenshot.png",
+  "metrics": { "turns": [...], "totalMs": 43739 },
+  "reminders": ["TOUJOURS fetcher le screenshot_url...", "..."]
 }
 ```
 
@@ -343,6 +346,21 @@ click app, click 4, click 2, click ×, click 3, click =, computer_done) en ~2 mi
 - `clearSessionRecipe(sessionId)` appele quand on DELETE une session (libere la memoire)
 - Les actions sont trackees proprement dans `AgentResult.actions[]` (pas du parsing regex)
 
+### 16. Rappels contextuels dans les reponses API (reminder-engine)
+- **Fichier** : `packages/gacua/backend/src/services/reminder-engine.ts`
+- **Fichier** : `packages/gacua/backend/src/api/openai-compat.ts`
+- Chaque reponse API inclut un champ `reminders: string[]` avec des pense-betes contextuels
+- Les rappels dependent de l'action en cours :
+  - **POST /v1/sessions** : "Verifie si une recette existe deja", "Choisis un nom descriptif"
+  - **POST /v1/chat/completions (step 1)** : "Phase 1 OBSERVER : as-tu verifie l'ecran ?"
+  - **POST /v1/chat/completions (tout)** : "TOUJOURS fetcher le screenshot_url"
+  - **POST /v1/chat/completions (computer_done)** : "Verifie le screenshot final", "Supprime les sessions A/B inferieures"
+  - **GET /v1/sessions (>50)** : "Menage recommande : N sessions"
+  - **DELETE /v1/sessions/:id** : "Verifie que la recette a ete sauvegardee"
+  - **GET /v1/sessions/:id/messages** : "Les screenshots sont plus fiables que le texte"
+- Le step number est tracke par session dans un `Map<sessionId, number>` pour detecter le 1er appel
+- Les regles sont declaratives (condition + message) → facile a etendre
+
 ## Commandes
 
 ```bash
@@ -358,55 +376,42 @@ npm run dev:gacua
 # IMPORTANT: ne PAS utiliser npx gacua ou gacua (version npm, pas locale)
 ```
 
-## Demarrer GACUA et recuperer le token (procedure orchestrateur)
+## Demarrer GACUA — script gacua.sh
 
-L'orchestrateur (moi, Claude) peut lancer le serveur GACUA et recuperer le token
-automatiquement sans intervention humaine.
+**Script** : `~/gacua/gacua.sh` — gere start/stop/restart/status/token
 
 ### Token : comment ca marche
 
 - **Genere au demarrage** : 32 bytes random → 64 caracteres hex
-- **En memoire uniquement** : pas de fichier, pas d'env var, pas dans les logs
-- **Imprime dans le stdout** : la seule source est le console output du serveur
+- **En memoire uniquement** : pas de fichier, pas d'env var
 - **Expire en 24h** : apres ca, il faut redemarrer le serveur
 - **Fichier** : `packages/gacua/backend/src/auth/token.ts`
+- **Persistance** : le script stocke PID + token dans `/tmp/gacua.env`
 
-### Procedure complete
+### Commandes
 
 ```bash
-# 1. Verifier si le serveur tourne deja
-curl -s --max-time 2 http://192.168.11.13:3000/api/health 2>/dev/null
-# Si reponse 403 → serveur tourne mais token inconnu (demander a Romain)
-# Si timeout/erreur → serveur pas lance, continuer ci-dessous
+bash ~/gacua/gacua.sh start    # Lance, attend le token, affiche tout
+bash ~/gacua/gacua.sh stop     # Tue API + MCP proprement
+bash ~/gacua/gacua.sh restart  # Stop + Start
+bash ~/gacua/gacua.sh status   # Montre PIDs, token, validite
+bash ~/gacua/gacua.sh token    # Affiche juste le token (pour scripting)
+```
 
-# 2. Build si necessaire (apres modif code)
-cd ~/gacua && npm run build
+### Utilisation dans curl
 
-# 3. Lancer le serveur en background et capturer le stdout
-cd ~/gacua && npm run start:gacua > /tmp/gacua-start.log 2>&1 &
-sleep 15  # Attendre l'auth Gemini + demarrage Express
-
-# 4. Extraire le token du stdout
-GACUA_TOKEN=$(grep -oP 'token=\K[0-9a-f]{64}' /tmp/gacua-start.log | head -1)
-echo "Token: $GACUA_TOKEN"
-
-# 5. Verifier que ca marche
-curl -s "http://192.168.11.13:3000/api/health?token=$GACUA_TOKEN"
-# → {"message":"healthy"}
-
-# 6. Utiliser l'API
-curl -s -X POST "http://192.168.11.13:3000/v1/sessions" \
-  -H "Authorization: Bearer $GACUA_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"ma-session","model":"gemini-3-flash-preview"}'
+```bash
+# Le token est composable :
+curl -s "http://192.168.11.13:3000/v1/sessions?token=$(bash ~/gacua/gacua.sh token)"
 ```
 
 ### Reflexe autonome
 
 **REGLE** : quand j'ai besoin de GACUA, je DOIS d'abord tenter de me debrouiller seul :
-1. Tester si le serveur tourne : `curl -s --max-time 2 http://192.168.11.13:3000/api/health`
-2. Si pas de reponse → lancer le serveur moi-meme (procedure ci-dessus)
-3. Si reponse 403 (serveur tourne, token inconnu) → demander le token a Romain
+1. `bash ~/gacua/gacua.sh status` — verifier l'etat
+2. Si pas lance → `bash ~/gacua/gacua.sh start`
+3. Si token invalide → `bash ~/gacua/gacua.sh restart`
+4. Si status dit "running" mais token "unknown" → demander le token a Romain
    (c'est le seul cas ou je dois demander)
 
 ### Quand Romain donne le token
@@ -414,23 +419,6 @@ curl -s -X POST "http://192.168.11.13:3000/v1/sessions" \
 Souvent Romain colle l'URL du serveur dans le chat :
 `http://192.168.11.13:3000?token=abc123...`
 → Extraire le token de l'URL et l'utiliser directement.
-
-### Arreter le serveur
-
-```bash
-# Trouver et tuer le process
-# Option 1 : si lance en background dans ce shell
-kill %1
-
-# Option 2 : trouver le PID
-# Sur Windows (cmd.exe, pas bash) :
-netstat -ano | findstr :3000
-taskkill /PID <pid> /F
-
-# Option 3 : tuer aussi le MCP server
-netstat -ano | findstr :10001
-taskkill /PID <pid> /F
-```
 
 ## Authentification Gemini
 
@@ -489,7 +477,7 @@ L'orchestrateur est le cerveau qui planifie les grandes etapes, observe et s'ada
 │  - Boucle: Screenshot → Planning → Grounding → Exec  │
 │  - Enchaine les actions de facon autonome             │
 │  - S'arrete via computer_done (signal explicite)      │
-│  - Retourne : texte + screenshot_url + metrics        │
+│  - Retourne : texte + screenshot_url + metrics + reminders │
 │  - Ne memorise rien entre les sessions               │
 │                                                      │
 └─────────────────────────────────────────────────────┘
@@ -497,6 +485,24 @@ L'orchestrateur est le cerveau qui planifie les grandes etapes, observe et s'ada
 
 **Note** : Claude Code (moi) est l'orchestrateur principal pour le moment.
 A terme, OpenClaw prendra ce role depuis un serveur distant.
+
+### Checklist rapide — AVANT / PENDANT / APRES
+
+**AVANT de piloter GACUA :**
+- [ ] Token connu ? Sinon → `bash ~/gacua/gacua.sh status` (reflexe autonome)
+- [ ] Ecran connu ? Sinon → message neutre d'abord (Phase 1 OBSERVER)
+- [ ] Nom de session descriptif ? (sera le titre de la recette)
+- [ ] Recette existante ? (lire la table RECIPES ci-dessous)
+
+**PENDANT l'execution :**
+- [ ] Screenshot fetche apres chaque etape ? (source de verite)
+- [ ] Metrics coherentes ? (planningMs trop eleve = prompt trop vague)
+- [ ] Plan a adapter ? (imprevus, popup, erreur)
+
+**APRES la tache :**
+- [ ] Recette sauvegardee auto ? (verifier recipes/)
+- [ ] Sessions doublons/inferieures a supprimer ?
+- [ ] Si A/B testing : comparer metrics, garder la meilleure, supprimer le reste
 
 ### Protocole orchestrateur — OBLIGATOIRE
 
@@ -766,7 +772,7 @@ Lecture des metrics : le bottleneck est `planningMs` (6-13s = temps de reflexion
 ## Notes
 
 - Le selecteur de modele est **par session** : changer de modele necessite une nouvelle session
-- Si erreur "EADDRINUSE" : `netstat -ano | findstr :10001` puis `taskkill /PID <pid> /F` (dans cmd.exe)
+- Si erreur "EADDRINUSE" : `bash ~/gacua/gacua.sh restart` (tue les processes et relance)
 - Les screenshots sont croppes en carres 768x768 avec 50% de chevauchement
 - Resolution ecran : 3072x1728
 - **~10-20s par tour** : screenshot (~0.5s) + planning (~7-13s) + execution (~3-5s)

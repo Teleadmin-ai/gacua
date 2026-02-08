@@ -16,6 +16,7 @@ import { validateTokenString } from '../auth/token.js';
 import { sessionManager } from '../services/session/index.js';
 import { runComputerUseAgent } from '../services/computer-use/interface.js';
 import { appendRecipeStep, clearSessionRecipe } from '../services/recipe-saver.js';
+import { getReminders } from '../services/reminder-engine.js';
 import type {
   ServerEvent,
   PersistentMessageContentBlock,
@@ -23,6 +24,9 @@ import type {
 } from '@gacua/shared';
 
 const apiLogger = logger.child({ module: 'openai-compat' });
+
+// Track step count per session for contextual reminders
+const sessionStepCount = new Map<string, number>();
 
 // ---------------------------------------------------------------------------
 // Model mapping
@@ -280,6 +284,7 @@ apiRouter.get('/v1/models', validateToken, (_req, res) => {
 apiRouter.get('/v1/sessions', validateToken, async (req, res) => {
   try {
     const sessions = await sessionManager.getAllSessions();
+    const reminders = getReminders({ action: 'session_list', sessionCount: sessions.length });
     res.json({
       object: 'list',
       data: sessions.map((s) => ({
@@ -288,6 +293,7 @@ apiRouter.get('/v1/sessions', validateToken, async (req, res) => {
         model: s.model,
         status: s.status,
       })),
+      reminders,
     });
   } catch (error) {
     req.log.error({ err: error }, 'Failed to list sessions');
@@ -300,13 +306,16 @@ apiRouter.get('/v1/sessions', validateToken, async (req, res) => {
 apiRouter.post('/v1/sessions', validateToken, async (req, res) => {
   try {
     const { name, model } = req.body as { name?: string; model?: string };
+    const sessionName = name ?? 'api-session';
     const result = await sessionManager.createSession({
-      name: name ?? 'api-session',
+      name: sessionName,
       model: resolveModel(model ?? 'gacua-gemini-3-pro'),
     });
+    const reminders = getReminders({ action: 'session_create', sessionName });
     res.status(201).json({
       id: result.id,
       status: 'created',
+      reminders,
     });
   } catch (error) {
     req.log.error({ err: error }, 'Failed to create session');
@@ -321,10 +330,13 @@ apiRouter.delete('/v1/sessions/:id', validateToken, async (req, res) => {
     const sessionId = req.params['id'];
     await sessionManager.deleteSession(sessionId);
     clearSessionRecipe(sessionId);
+    sessionStepCount.delete(sessionId);
+    const reminders = getReminders({ action: 'session_delete', sessionId });
     res.json({
       id: sessionId,
       object: 'session',
       deleted: true,
+      reminders,
     });
   } catch (error) {
     const isNotFound =
@@ -359,9 +371,11 @@ apiRouter.get('/v1/sessions/:id/messages', validateToken, async (req, res) => {
       }))
       .filter((m) => m.content.length > 0);
 
+    const reminders = getReminders({ action: 'messages_list', sessionId });
     res.json({
       object: 'list',
       data: filtered,
+      reminders,
     });
   } catch (error) {
     req.log.error({ err: error }, 'Failed to retrieve messages');
@@ -424,6 +438,10 @@ apiRouter.post('/v1/chat/completions', validateToken, async (req, res) => {
       }
     }
 
+    // Track step number for this session
+    const currentStep = (sessionStepCount.get(sessionId!) ?? 0) + 1;
+    sessionStepCount.set(sessionId!, currentStep);
+
     // Helper: append step to session recipe (fire-and-forget, accumulates across session)
     const trySaveRecipe = (result: AgentResult) => {
       if (result.metrics && result.metrics.turns.length > 0) {
@@ -438,6 +456,17 @@ apiRouter.post('/v1/chat/completions', validateToken, async (req, res) => {
           summary,
         ).catch((err) => apiLogger.warn({ err }, 'Failed to save recipe step'));
       }
+    };
+
+    // Helper: generate contextual reminders based on the result
+    const buildReminders = (result: AgentResult): string[] => {
+      const hasDone = result.actions.some((a) => a.startsWith('computer_done'));
+      return getReminders({
+        action: 'chat_completion',
+        sessionId: sessionId!,
+        stepNumber: currentStep,
+        hasDone,
+      });
     };
 
     if (body.stream) {
@@ -488,7 +517,8 @@ apiRouter.post('/v1/chat/completions', validateToken, async (req, res) => {
         },
       );
 
-      // Send final chunk with finish_reason + screenshot_url
+      // Send final chunk with finish_reason + screenshot_url + reminders
+      const streamReminders = buildReminders(streamResult);
       const finalChunk = {
         id: completionId,
         object: 'chat.completion.chunk',
@@ -504,6 +534,7 @@ apiRouter.post('/v1/chat/completions', validateToken, async (req, res) => {
         session_id: sessionId,
         ...(streamResult.screenshotUrl && { screenshot_url: streamResult.screenshotUrl }),
         ...(streamResult.metrics && { metrics: streamResult.metrics }),
+        reminders: streamReminders,
       };
       res.write(`data: ${JSON.stringify(finalChunk)}\n\n`);
       res.write('data: [DONE]\n\n');
@@ -517,6 +548,7 @@ apiRouter.post('/v1/chat/completions', validateToken, async (req, res) => {
         geminiModel,
       );
 
+      const reminders = buildReminders(result);
       res.json({
         id: completionId,
         object: 'chat.completion',
@@ -540,6 +572,7 @@ apiRouter.post('/v1/chat/completions', validateToken, async (req, res) => {
         session_id: sessionId,
         ...(result.screenshotUrl && { screenshot_url: result.screenshotUrl }),
         ...(result.metrics && { metrics: result.metrics }),
+        reminders,
       });
       trySaveRecipe(result);
     }
