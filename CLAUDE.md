@@ -259,6 +259,18 @@ Gemini 3 exige que les `thoughtSignature` soient preserves dans l'historique des
 - **Fichier** : `packages/gacua/frontend/src/components/Sessions.tsx` — Icone poubelle sur chaque session
 - **Fichier** : `packages/gacua/frontend/src/App.tsx` — Callback `deleteSession` (appel DELETE /api/sessions/:id)
 
+### 8. Fix leak connexions MCP (closeAllMcpClients)
+- **Fichier** : `packages/core/src/tools/mcp-client.ts` — `activeMcpClients` Map + `closeAllMcpClients()` export
+- **Fichier** : `packages/gacua/backend/src/services/computer-use/interface.ts` — `finally` block apres `runAgent()`
+- Import : `import { closeAllMcpClients } from '@gacua/gemini-cli-core'`
+
+### 9. Screenshot URL dans reponse API
+- **Fichier** : `packages/gacua/backend/src/api/openai-compat.ts`
+- `AgentResult.screenshotUrl` : track le dernier screenshot depuis les events `persistent_message`
+- Ajoute `screenshot_url` dans la reponse JSON de `/v1/chat/completions`
+- Filtre : seuls `_screenshot.png` (pas les crops `_vc0`, `_vc1`, `_vc2`, ni `_annotated`)
+- Permet a un orchestrateur externe de voir l'ecran entre chaque etape
+
 ## Commandes
 
 ```bash
@@ -314,24 +326,117 @@ GACUA reutilise la config de Gemini CLI :
 | GET | /v1/sessions/:id/messages | Historique texte |
 | POST | /v1/chat/completions | Envoyer un ordre, recevoir le feedback |
 
+## Orchestration par API — Pattern Step-by-Step
+
+### Principe fondamental
+
+L'agent GACUA fait **UNE SEULE action par tour** (screenshot → planning → grounding → execute).
+Pour des taches complexes (ex: envoyer un email Gmail), il faut **decomposer en etapes atomiques**
+et les envoyer sequentiellement dans la meme session via l'API.
+
+**IMPORTANT** : ne PAS envoyer une instruction complexe en un seul message.
+Gemini essaiera de tout faire d'un coup et echouera (surtout Flash).
+
+### Exemple : envoyer un email Gmail
+
+```bash
+TOKEN="Bearer xxx"
+URL="http://192.168.11.13:3000"
+
+# 1. Creer une session
+SESSION=$(curl -s -X POST "$URL/v1/sessions" -H "Authorization: $TOKEN" \
+  -H "Content-Type: application/json" -d '{"name":"gmail"}' | jq -r '.id')
+
+# 2. Etape par etape (attendre chaque reponse avant la suivante)
+curl -s -X POST "$URL/v1/chat/completions" -H "Authorization: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"model\":\"gacua-gemini-3-flash\",\"session_id\":\"$SESSION\",
+       \"messages\":[{\"role\":\"user\",\"content\":\"Ouvre le navigateur et va sur gmail.com\"}]}"
+
+curl -s -X POST "$URL/v1/chat/completions" ...
+  "Clique sur l icone profil en haut a droite et selectionne le compte user@example.com"
+
+curl -s -X POST "$URL/v1/chat/completions" ...
+  "Clique sur Nouveau message"
+
+curl -s -X POST "$URL/v1/chat/completions" ...
+  "Dans le champ destinataire, tape dest@example.com et appuie sur Entree"
+
+curl -s -X POST "$URL/v1/chat/completions" ...
+  "Clique sur le champ Objet et tape: mon objet"
+
+curl -s -X POST "$URL/v1/chat/completions" ...
+  "Clique dans le corps du mail et tape: mon message"
+
+curl -s -X POST "$URL/v1/chat/completions" ...
+  "Clique sur le bouton Envoyer"
+```
+
+### Conseils pour l'orchestrateur (LLM externe)
+
+- **Penser pour l'agent** : l'orchestrateur doit avoir une representation mentale de l'ecran
+  et decider quelles etapes envoyer, meme sans voir les screenshots
+- **Une action = un message** : click, type, scroll, etc.
+- **Attendre la reponse** : ne jamais envoyer le message suivant avant d'avoir la reponse
+- **Lire le feedback** : la reponse contient ce que l'agent a fait et vu
+- **Flash suffit** : pour des etapes simples et atomiques, Flash est aussi fiable que Pro
+- **~30s par etape** : 2 appels API Gemini (planning + grounding) + execution
+
+### Screenshots — Stockage et acces
+
+Les screenshots sont stockes dans le dossier de session :
+```
+.gemini/gacua_sessions/{sessionId}/images/
+  {timestamp}_screenshot.png           # Screenshot complet (3072x1728)
+  {timestamp}_screenshot_vc0.png       # Crop 768x768 (haut-gauche)
+  {timestamp}_screenshot_vc1.png       # Crop 768x768 (milieu)
+  {timestamp}_screenshot_vc2.png       # Crop 768x768 (droite)
+  {timestamp}_screenshot_annotated.png # Screenshot avec bounding box dessine
+```
+
+**Acces HTTP** : `GET /images/{sessionId}/{fileName}?token=T`
+
+Les messages persistants referent aux images via `internal://{sessionId}/{fileName}`.
+Le frontend web affiche les screenshots dans la conversation.
+
+### Screenshot dans la reponse API (IMPLEMENTE)
+
+La reponse de `/v1/chat/completions` inclut un champ `screenshot_url` pointant vers
+le dernier screenshot complet pris par l'agent apres execution de l'action.
+
+```json
+{
+  "choices": [{ "message": { "content": "..." } }],
+  "session_id": "2026-02-08T...",
+  "screenshot_url": "/images/2026-02-08T.../2026-02-08T..._screenshot.png"
+}
+```
+
+L'orchestrateur LLM peut alors :
+1. Recuperer l'image via `GET {screenshot_url}?token=T`
+2. L'analyser avec son propre modele vision (Claude, GPT, etc.)
+3. Decider de la prochaine etape en connaissance de cause
+
+**Fichier** : `packages/gacua/backend/src/api/openai-compat.ts`
+- `collectAgentResponse()` track le dernier screenshot depuis les `persistent_message` events
+- Filtre : seuls les screenshots complets (`_screenshot.png`), pas les crops (`_vc0`, `_vc1`, etc.)
+- Disponible en mode non-streaming et streaming (dans le dernier chunk `finish_reason: 'stop'`)
+
 ## Bugs connus / TODO
 
-### Leak de connexions MCP (TODO)
+### Leak de connexions MCP (CORRIGE)
 Chaque appel a `runComputerUseAgent()` cree un nouveau `Config` → `config.initialize()` →
-`createToolRegistry()` → `discoverAllTools()` → ouvre une **nouvelle connexion SSE** au serveur MCP
-(port 10001) qui n'est **jamais fermee**. La classe `Config` n'a pas de methode `cleanup()`/`close()`.
+ouvre une nouvelle connexion SSE au serveur MCP (port 10001).
 
-**Consequence** : les connexions s'accumulent (visible avec `netstat -ano | findstr :10001`).
-Sur des sessions longues, ca peut causer des erreurs `SSE stream disconnected: TypeError: terminated`.
+**Fix** : `closeAllMcpClients()` dans `packages/core/src/tools/mcp-client.ts` :
+- Map `activeMcpClients` track les connexions MCP ouvertes
+- `closeAllMcpClients()` ferme toutes les connexions et clear la map
+- Appele dans le `finally` block de `runComputerUseAgent()` (interface.ts)
+- Verifie : 0 connexions apres chaque appel, pas de regression sur appels sequentiels
 
-**Solution tentee et revertee** : cacher le Config au niveau module pour reutiliser la connexion MCP.
-**Resultat** : casse completement le controle du PC — les outils MCP deviennent inutilisables apres
-le 1er appel. Le cache Config est INTERDIT — chaque appel DOIT creer un nouveau Config.
-
-**Solution correcte (a implementer)** : ajouter une methode `cleanup()` dans `ToolRegistry`
-(`packages/core/src/tools/tool-registry.ts`) qui ferme les clients MCP, puis l'appeler dans
-`interface.ts` apres `runAgent()` (dans un `finally` block). Necessite aussi d'exposer
-`config.getToolRegistry()` pour y acceder et d'ajouter `cleanup()` dans `Config`.
+**ATTENTION — Config caching INTERDIT** : une tentative de cacher le Config au niveau module
+pour reutiliser la connexion MCP a completement casse le controle du PC.
+Chaque appel DOIT creer un nouveau Config. La solution est de fermer apres, pas de reutiliser.
 
 ### Flash 3 : texte parasite dans les reponses
 Gemini 3 Flash emet parfois des chiffres parasites ("0", "2") comme text parts a cote de ses

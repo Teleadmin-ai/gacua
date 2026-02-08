@@ -123,6 +123,7 @@ function formatAction(name: string, args: Record<string, unknown>): string {
 interface AgentResult {
   text: string;
   finishReason: 'stop';
+  screenshotUrl: string | null;
 }
 
 async function collectAgentResponse(
@@ -134,6 +135,7 @@ async function collectAgentResponse(
   return new Promise<AgentResult>((resolve, reject) => {
     const textChunks: string[] = [];
     const actions: string[] = [];
+    let lastScreenshotUrl: string | null = null;
     let resolved = false;
 
     const emitEvent = (event: ServerEvent) => {
@@ -150,6 +152,17 @@ async function collectAgentResponse(
 
           case 'persistent_message': {
             const msg = event.payload;
+
+            // Track the last full screenshot URL from any message
+            for (const block of msg.content) {
+              if ('image' in block && block.image.src.startsWith('internal://')) {
+                const fileName = block.image.src.split('/').pop();
+                // Only track full screenshots, not crops (_vc0, _vc1, etc.)
+                if (fileName && fileName.includes('_screenshot.png')) {
+                  lastScreenshotUrl = `/images/${sessionId}/${fileName}`;
+                }
+              }
+            }
 
             // Collect model text
             if (msg.role === 'model') {
@@ -186,7 +199,7 @@ async function collectAgentResponse(
                 onStreamChunk?.(finalText);
               }
 
-              resolve({ text: finalText, finishReason: 'stop' });
+              resolve({ text: finalText, finishReason: 'stop', screenshotUrl: lastScreenshotUrl });
             }
             break;
           }
@@ -211,7 +224,7 @@ async function collectAgentResponse(
             }
             onStreamChunk?.(finalText);
           }
-          resolve({ text: finalText, finishReason: 'stop' });
+          resolve({ text: finalText, finishReason: 'stop', screenshotUrl: lastScreenshotUrl });
         }
       })
       .catch((err) => {
@@ -406,7 +419,7 @@ apiRouter.post('/v1/chat/completions', validateToken, async (req, res) => {
       };
       res.write(`data: ${JSON.stringify(initialChunk)}\n\n`);
 
-      await collectAgentResponse(
+      const streamResult = await collectAgentResponse(
         sessionId,
         lastUserMessage.content,
         geminiModel,
@@ -429,7 +442,7 @@ apiRouter.post('/v1/chat/completions', validateToken, async (req, res) => {
         },
       );
 
-      // Send final chunk with finish_reason
+      // Send final chunk with finish_reason + screenshot_url
       const finalChunk = {
         id: completionId,
         object: 'chat.completion.chunk',
@@ -443,6 +456,7 @@ apiRouter.post('/v1/chat/completions', validateToken, async (req, res) => {
           },
         ],
         session_id: sessionId,
+        ...(streamResult.screenshotUrl && { screenshot_url: streamResult.screenshotUrl }),
       };
       res.write(`data: ${JSON.stringify(finalChunk)}\n\n`);
       res.write('data: [DONE]\n\n');
@@ -476,6 +490,7 @@ apiRouter.post('/v1/chat/completions', validateToken, async (req, res) => {
           total_tokens: 0,
         },
         session_id: sessionId,
+        ...(result.screenshotUrl && { screenshot_url: result.screenshotUrl }),
       });
     }
   } catch (error) {
