@@ -82,9 +82,7 @@ function buildRecipeContent(recipe: SessionRecipe): string {
   const totalTurns = recipe.steps.reduce((sum, s) => sum + s.metrics.turns.length, 0);
   const duration = formatDuration(totalMs);
 
-  // Use last summary as title, or first prompt
-  const lastSummary = [...recipe.steps].reverse().find(s => s.summary)?.summary;
-  const title = lastSummary ?? recipe.steps[0]?.prompt.slice(0, 80) ?? 'Untitled';
+  const title = recipe.sessionName;
 
   let content = `# Recette : ${title}\n\n`;
   content += `- **Date** : ${date}\n`;
@@ -124,8 +122,7 @@ function buildRecipeContent(recipe: SessionRecipe): string {
 
 function getRecipeFileName(recipe: SessionRecipe): string {
   const totalMs = recipe.steps.reduce((sum, s) => sum + s.metrics.totalMs, 0);
-  const lastSummary = [...recipe.steps].reverse().find(s => s.summary)?.summary;
-  const subject = sanitizeForFilename(lastSummary ?? recipe.steps[0]?.prompt ?? 'unknown');
+  const subject = sanitizeForFilename(recipe.sessionName);
   const duration = formatDuration(totalMs);
   return `recipe_${subject}_${duration}.md`;
 }
@@ -231,8 +228,7 @@ export async function appendRecipeStep(
     }, 'Recipe updated');
 
     // Update CLAUDE.md
-    const lastSummary = [...recipe.steps].reverse().find(s => s.summary)?.summary;
-    const description = lastSummary ?? prompt.slice(0, 80);
+    const description = recipe.sessionName;
     const date = recipe.startedAt.toISOString().slice(0, 10);
     await updateClaudeMdRecipeList(
       newFileName,
