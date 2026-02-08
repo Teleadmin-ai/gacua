@@ -79,7 +79,11 @@ async function persistentContentBlockToPart(
     return { text: block.text };
   }
   if ('functionCall' in block) {
-    return { functionCall: block.functionCall };
+    const result: Part = { functionCall: block.functionCall };
+    if (block.thoughtSignature) {
+      (result as unknown as { thoughtSignature: string }).thoughtSignature = block.thoughtSignature;
+    }
+    return result;
   }
   if ('functionResponse' in block) {
     return { functionResponse: block.functionResponse };
@@ -122,8 +126,10 @@ function partToPersistentContentBlock(
     return { text: part.text };
   }
   if (part.functionCall) {
+    const partAny = part as unknown as { thoughtSignature?: string };
     return {
       functionCall: part.functionCall as FunctionCall,
+      thoughtSignature: partAny.thoughtSignature,
     };
   }
   if (part.functionResponse) {
@@ -243,8 +249,17 @@ export async function runComputerUseAgent(
     await recoverHistory(sessionId);
 
   let agentInput: AgentInput;
+  // Auto-accept all computer tools by default
+  const defaultAcceptedTools = [
+    'computer_click',
+    'computer_type',
+    'computer_key',
+    'computer_scroll',
+    'computer_wait',
+    'computer_drag_and_drop',
+  ];
   const sessionAcceptedTools =
-    (await sessionRepository.getSession(sessionId)).acceptedTools || [];
+    (await sessionRepository.getSession(sessionId)).acceptedTools || defaultAcceptedTools;
 
   if (typeof input !== 'string') {
     if (!toolReviewRequests.find((r) => r.reviewId === input.reviewId)) {

@@ -81,6 +81,8 @@ const Input: React.FC<InputProps> = ({
             value={model}
             onChange={onModelChange}
             options={[
+              { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro' },
+              { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash' },
               { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
               { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
             ]}

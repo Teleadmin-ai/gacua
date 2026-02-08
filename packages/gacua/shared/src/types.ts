@@ -25,6 +25,7 @@ export interface FunctionCall {
   id: string;
   name: string;
   args: Record<string, unknown>;
+  thoughtSignature?: string;
 }
 
 export interface PersistentImage {
@@ -60,6 +61,7 @@ export type PersistentMessageContentBlock =
     }
   | {
       functionCall: FunctionCall;
+      thoughtSignature?: string;
     }
   | {
       image: PersistentImage;

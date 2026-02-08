@@ -74,6 +74,7 @@ function getResponseText(
 async function detectElement(
   imagePart: Part,
   elementDescription: string,
+  config: Config,
   contentGenerator: ContentGenerator,
   processStreamResponse: (
     role: 'grounding_model',
@@ -88,7 +89,7 @@ async function detectElement(
   const prompt = elementDescription;
   const responseStream = await contentGenerator.generateContentStream(
     {
-      model: 'gemini-2.5-pro',
+      model: config.getModel(),
       contents: [imagePart, { text: prompt }],
       config: {
         systemInstruction: `You are a UI grounding agent.
@@ -374,16 +375,24 @@ export async function runAgent(
         thought += textPart.thought || '';
         output += textPart.text || '';
       }
-      if (resp.functionCalls) {
-        functionCalls.push(
-          ...resp.functionCalls.map((fc) => ({
-            id:
-              fc.id ??
-              `${fc.name}-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
-            name: fc.name!,
-            args: fc.args!,
-          })),
-        );
+      // Extract function calls with thoughtSignature from parts directly
+      const candidate = resp.candidates?.[0];
+      if (candidate?.content?.parts) {
+        for (const part of candidate.content.parts) {
+          const partAny = part as unknown as {
+            functionCall?: { id?: string; name?: string; args?: Record<string, unknown> };
+            thoughtSignature?: string;
+          };
+          if (partAny.functionCall) {
+            functionCalls.push({
+              id: partAny.functionCall.id ??
+                `${partAny.functionCall.name}-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+              name: partAny.functionCall.name!,
+              args: partAny.functionCall.args!,
+              thoughtSignature: partAny.thoughtSignature,
+            });
+          }
+        }
       }
     }
 
@@ -394,7 +403,10 @@ export async function runAgent(
         parts: [
           ...(thought ? [{ text: thought, thought: true }] : []),
           ...(output ? [{ text: output }] : []),
-          ...functionCalls.map((fc) => ({ functionCall: fc })),
+          ...functionCalls.map((fc) => ({
+            functionCall: { id: fc.id, name: fc.name, args: fc.args },
+            thoughtSignature: fc.thoughtSignature,
+          })),
         ],
         forDisplay,
       });
@@ -500,7 +512,10 @@ export async function runAgent(
             role: 'model',
             parts: [
               ...(result.output ? [{ text: result.output }] : []),
-              ...result.functionCalls.map((fc) => ({ functionCall: fc })),
+              ...result.functionCalls.map((fc) => ({
+                functionCall: { id: fc.id, name: fc.name, args: fc.args },
+                thoughtSignature: fc.thoughtSignature,
+              })),
             ],
           });
           functionCalls = result.functionCalls;
@@ -540,6 +555,7 @@ export async function runAgent(
             id: fc.id ?? `${fc.name}-${Date.now()}`,
             name: fc.name!,
             args: fc.args!,
+            thoughtSignature: fc.thoughtSignature,
           };
           const id = originalFunctionCall.id;
           const functionCallLogger = turnLogger.child({ id });
@@ -581,6 +597,7 @@ export async function runAgent(
                 detectElement(
                   imagePart,
                   elementDescription,
+                  config,
                   contentGenerator,
                   processStreamResponse,
                   functionCallLogger,
@@ -608,6 +625,7 @@ export async function runAgent(
             functionCall = {
               ...groundedToolCall.value(),
               id: originalFunctionCall.id,
+              thoughtSignature: originalFunctionCall.thoughtSignature,
             };
             const toolCallDescription =
               await groundedToolCall.getDescription(saveImage);

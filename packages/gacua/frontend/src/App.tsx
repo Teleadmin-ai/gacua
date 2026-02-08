@@ -30,7 +30,7 @@ function App() {
   const [messages, setMessages] = useState<DisplayMessage[] | null>(null);
   const [generating, setGenerating] = useState(false);
   const [input, setInput] = useState('');
-  const [model, setModel] = useState('gemini-2.5-pro');
+  const [model, setModel] = useState('gemini-3-pro-preview');
 
   const accessToken = new URLSearchParams(window.location.search).get('token');
 

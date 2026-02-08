@@ -37,7 +37,7 @@ app.post('/mcp', async (req, res) => {
     });
 
     let pingIntervalId: NodeJS.Timeout | undefined = undefined;
-    const PING_INTERVAL_MS = 180000;
+    const PING_INTERVAL_MS = 25000; // 25 seconds - prevents network idle timeout disconnections
 
     transport.onclose = () => {
       if (transport.sessionId) {
