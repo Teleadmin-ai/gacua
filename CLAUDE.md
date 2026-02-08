@@ -300,6 +300,37 @@ Ce n'etait PAS un bug du code mais un comportement du modele Flash.
   `"The screen is split into 3 cropped images with valid image_id values from 0 to 2"`
 - Flash sait maintenant combien de crops il y a et quels indices sont valides
 
+### 13. Outil computer_done — signal d'arret explicite
+**Probleme** : apres les fixes 10-12, Flash enchainait les actions avec succes mais ne savait
+pas quand s'arreter. La boucle `while(true)` continuait indefiniment car Flash retournait
+toujours des function calls au lieu de s'arreter (0 function calls).
+Avant les fixes, les erreurs de grounding agissaient comme un frein naturel.
+Apres les fixes, Flash etait trop performant et ne lachait plus la main.
+
+**Solution** : un outil `computer_done` que Flash appelle pour signaler qu'il a fini.
+- **Fichier** : `packages/gacua/backend/src/services/computer-use/tool-computer/index.ts`
+  - Declaration de `computer_done` avec parametre `summary` (description de ce qui a ete fait)
+  - Ajoute a la liste des function declarations envoyees a Gemini
+- **Fichier** : `packages/gacua/backend/src/services/computer-use/agent.ts`
+  - Detection de `computer_done` dans les function calls → `setSessionStatus('stagnant', summary)` + break
+  - Rappel APRES les images dans chaque tour : "IMPORTANT: When you have completed the user's task,
+    you MUST call computer_done with a summary instead of performing more actions."
+  - Le rappel est place APRES les images car c'est la derniere chose que Flash voit avant de decider
+
+**Resultat** : Flash enchaine les actions puis appelle `computer_done` quand il a fini.
+Exemple : "Ouvre la calculatrice et fais 42×3" → Flash fait 7 tours (click Start, type calc,
+click app, click 4, click 2, click ×, click 3, click =, computer_done) en ~2 min.
+
+### 14. Logs de timing par phase (diagnostic)
+- **Fichier** : `packages/gacua/backend/src/services/computer-use/agent.ts`
+- Chaque tour logue les durees de chaque phase :
+  - `=== TURN START ===` avec turnCount
+  - `phase: 'screenshot'` — duree du screenshot MCP
+  - `phase: 'planning'` — duree de l'appel API Gemini (planning + streaming)
+  - `phase: 'execution'` — duree du grounding + execution des outils
+  - `turnDurationMs` — duree totale du tour
+- Permet de diagnostiquer ou le temps est passe et detecter les hangs
+
 ## Commandes
 
 ```bash
@@ -431,8 +462,8 @@ L'orchestrateur est le cerveau qui planifie les grandes etapes, observe et s'ada
 │                                                      │
 │  - Recoit une instruction                            │
 │  - Boucle: Screenshot → Planning → Grounding → Exec  │
-│  - Peut enchainer plusieurs actions par tour          │
-│  - S'arrete quand Gemini decide (0 function calls)   │
+│  - Enchaine les actions de facon autonome             │
+│  - S'arrete via computer_done (signal explicite)      │
 │  - Retourne : texte + screenshot_url                 │
 │  - Ne memorise rien entre les sessions               │
 │                                                      │
@@ -502,15 +533,42 @@ le screenshot lui-meme juste apres.
 Le screenshot est la **source de verite**. Le texte de GACUA est un complement utile
 mais l'orchestrateur ne doit jamais se fier uniquement au texte pour decider.
 
+### Exemple reel — Ouvrir la calculatrice et calculer 42×3
+
+```bash
+# Etape 1 : ouvrir et calculer
+curl -s -X POST "$URL/v1/chat/completions" -H "Authorization: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gacua-gemini-3-flash","session_id":"'$SESSION'",
+       "messages":[{"role":"user","content":"Ouvre le menu Demarrer, tape calculatrice, lance l app, puis fais 42 multiplier par 3 et appuie sur egal"}]}'
+
+# Reponse (~2 min, Flash fait 8 tours autonomes) :
+{
+  "choices": [{
+    "message": {
+      "content": "Actions performed:\n1. click on \"Windows Start button\"\n2. type \"calculatrice\"\n3. click on \"Calculatrice app\"\n4. click on \"Button 4\"\n5. click on \"Button 2\"\n6. click on \"Multiplication button\"\n7. click on \"Button 3\"\n8. click on \"Equals button\"\n9. computer_done({\"summary\":\"42 × 3 = 126\"})"
+    }
+  }],
+  "session_id": "2026-02-08T...",
+  "screenshot_url": "/images/2026-02-08T.../...screenshot.png"
+}
+```
+
+Flash enchaine : click Demarrer → type → click app → click 4 → click 2 → click × → click 3
+→ click = → `computer_done`. Tout en autonome, une seule requete API.
+
 ### Conseils techniques
 
-- **Instructions completes** : Flash peut gerer des instructions multi-etapes ("ouvre Notepad, tape du texte, sauvegarde")
-  mais pour des workflows longs, decomposer reste plus fiable
+- **Instructions completes** : Flash gere des instructions multi-etapes en autonome
+  ("ouvre la calculatrice et fais 42×3" → 8 actions en ~2 min)
+- **computer_done** : Flash appelle `computer_done` quand il a fini. Pas besoin de lui dire
+  explicitement dans le prompt, le rappel est injecte automatiquement apres chaque screenshot
 - **Toujours verifier le screenshot** : apres CHAQUE message envoye, sans exception
 - **Attendre la reponse** : ne jamais envoyer le message suivant avant d'avoir la reponse
-- **Flash suffit** : pour la plupart des taches, Flash est fiable depuis les fixes des tool descriptions
-- **~30-60s par message** : Flash enchaine potentiellement plusieurs tours (2 appels API par tour)
+- **Flash suffit** : pour la plupart des taches, Flash est fiable depuis les fixes
+- **~30s par action** : chaque tour = screenshot + planning API + grounding API + execution
 - **Timeout MCP 30s** : si la connexion SSE tombe, le run echoue en 30s max (pas 10 min)
+- **Logs de timing** : chaque phase est loguee avec sa duree (voir modif 14)
 
 ### Screenshots — Stockage et acces
 
@@ -583,6 +641,13 @@ Flash demandait `image_id: 3` alors que les indices valides sont 0-2.
 Le timeout par defaut du MCP client etait 10 min. Quand la connexion SSE tombait,
 le run attendait 10 min pour rien avant de fail.
 **Fix** : timeout de 30s pour le serveur MCP `.computer` — voir modif 11.
+
+### Flash 3 : boucle infinie sans signal d'arret (CORRIGE)
+Apres les fixes 10-12, Flash enchainait les actions avec succes mais ne s'arretait jamais.
+La boucle `while(true)` continuait car Flash retournait toujours des function calls.
+Le mecanisme "0 function calls → stagnant" ne marchait pas car Flash trouvait toujours
+quelque chose a faire sur l'ecran.
+**Fix** : outil `computer_done` + rappel apres les images — voir modif 13.
 
 ### Flash 3 : texte parasite dans les reponses
 Gemini 3 Flash emet parfois des chiffres parasites ("0", "2") comme text parts a cote de ses

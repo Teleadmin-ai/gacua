@@ -420,9 +420,12 @@ export async function runAgent(
   try {
     while (true) {
       turnCount++;
+      const turnStart = Date.now();
       setSessionStatus('running', 'Turn ' + turnCount);
       const turnLogger = logger.child({ turnCount });
 
+      turnLogger.info({ turnCount, elapsed: 0 }, '=== TURN START ===');
+      const screenshotStart = Date.now();
       turnLogger.debug('Taking screenshot');
       const screenshot = await takeScreenshot(
         (
@@ -432,6 +435,7 @@ export async function runAgent(
           )
         ).llmContent,
       );
+      turnLogger.info({ phase: 'screenshot', durationMs: Date.now() - screenshotStart }, 'Screenshot taken');
       turnLogger.debug('Cropping screenshot');
       const croppedScreenshots = await cropScreenshot(screenshot);
       const croppedScreenshotsData = await Promise.all(
@@ -464,9 +468,11 @@ export async function runAgent(
       currentParts.push(
         { text: screenshotDescription },
         ...croppedScreenshotsData.map(({ imagePart }) => imagePart),
+        { text: 'IMPORTANT: When you have completed the user\'s task, you MUST call computer_done with a summary instead of performing more actions.' },
       );
 
-      turnLogger.debug('Planning next step');
+      const planStart = Date.now();
+      turnLogger.info('Planning next step');
       let functionCalls: StrictFunctionCall[] = [];
 
       async function planNextStep(extraPrompt?: string): Promise<boolean> {
@@ -535,7 +541,24 @@ export async function runAgent(
         }
       }
 
+      turnLogger.info({
+        phase: 'planning',
+        durationMs: Date.now() - planStart,
+        functionCallCount: functionCalls.length,
+        functionCallNames: functionCalls.map((fc) => fc.name),
+      }, 'Planning completed');
+
       if (functionCalls.length > 0) {
+        // Check if the model called computer_done — task is complete
+        const doneFc = functionCalls.find((fc) => fc.name === 'computer_done');
+        if (doneFc) {
+          const summary = (doneFc.args as { summary?: string })?.summary || 'Task completed';
+          turnLogger.info({ summary, turnDurationMs: Date.now() - turnStart }, 'Model signaled task completion via computer_done');
+          setSessionStatus('stagnant', summary);
+          break;
+        }
+
+        const execStart = Date.now();
         turnLogger.debug(
           { functionCallCount: functionCalls.length },
           'Processing function calls',
@@ -695,6 +718,12 @@ export async function runAgent(
           toolResponseParts.push(...delayedToolResponseParts);
         }
 
+        turnLogger.info({
+          phase: 'execution',
+          durationMs: Date.now() - execStart,
+          turnDurationMs: Date.now() - turnStart,
+        }, 'Tool execution completed');
+
         if (pending) {
           turnLogger.info('Session paused for tool review');
           setSessionStatus('pending', 'Tool call pending.');
@@ -704,7 +733,7 @@ export async function runAgent(
         currentParts = toolResponseParts;
       } else {
         const message = 'No more tool calls from model.';
-        turnLogger.info(message);
+        turnLogger.info({ turnDurationMs: Date.now() - turnStart }, message);
         setSessionStatus('stagnant', message);
         break;
       }

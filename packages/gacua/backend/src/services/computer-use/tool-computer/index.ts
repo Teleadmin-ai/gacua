@@ -37,6 +37,25 @@ export function getValidComputerTool(
   return tool;
 }
 
+const computerDoneDeclaration: FunctionDeclaration = {
+  name: 'computer_done',
+  description:
+    'Call this tool when you have completed the user\'s task and there is nothing left to do. This signals the end of your turn.',
+  parametersJsonSchema: {
+    properties: {
+      summary: {
+        description: 'A brief summary of what was accomplished',
+        type: 'string',
+      },
+    },
+    required: ['summary'],
+    type: 'object',
+  },
+};
+
 export function getComputerFunctionDeclarations(): FunctionDeclaration[] {
-  return Object.values(computerTools).map((tool) => tool.functionDeclaration);
+  return [
+    ...Object.values(computerTools).map((tool) => tool.functionDeclaration),
+    computerDoneDeclaration,
+  ];
 }
