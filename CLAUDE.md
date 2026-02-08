@@ -331,6 +331,18 @@ click app, click 4, click 2, click ×, click 3, click =, computer_done) en ~2 mi
   - `turnDurationMs` — duree totale du tour
 - Permet de diagnostiquer ou le temps est passe et detecter les hangs
 
+### 15. Sauvegarde automatique des recettes (recipe-saver)
+- **Fichier** : `packages/gacua/backend/src/services/recipe-saver.ts`
+- **Fichier** : `packages/gacua/backend/src/api/openai-compat.ts`
+- Apres chaque `/v1/chat/completions` reussi, `appendRecipeStep()` est appele
+- Les recettes **s'accumulent par session** dans un `Map<sessionId, SessionRecipe>` en memoire
+- Le fichier `recipes/recipe_{nom-session}_{duree}.md` est reecrit a chaque etape
+- Si le nom de fichier change (duree augmente), l'ancien fichier est supprime auto
+- Le CLAUDE.md est mis a jour entre `<!-- RECIPES_START/END -->` avec la table des recettes
+- **Titre = nom de session** choisi par l'orchestrateur (pas le summary de computer_done)
+- `clearSessionRecipe(sessionId)` appele quand on DELETE une session (libere la memoire)
+- Les actions sont trackees proprement dans `AgentResult.actions[]` (pas du parsing regex)
+
 ## Commandes
 
 ```bash
@@ -560,16 +572,20 @@ Les recettes **s'accumulent par session** : chaque appel API ajoute une etape,
 le fichier est reecrit avec la sequence complete, et le CLAUDE.md est mis a jour.
 
 **Emplacement** : `recipes/` a la racine du projet
-**Nommage** : `recipe_{sujet}_{duree}.md`
+**Nommage** : `recipe_{nom-de-session}_{duree}.md`
+
+Le **nom de session** (choisi par l'orchestrateur a la creation via `POST /v1/sessions`)
+sert de titre a la recette et de nom de fichier. L'orchestrateur DOIT donc choisir
+un nom descriptif pour chaque session (ex: `ouvrir-calc-et-42x3`, `envoyer-email-gmail`).
 
 Contenu d'une recette :
-- Nom de session (= discussion dans l'API, accessible via `GET /v1/sessions`)
-- Prompt envoye (ou sequence de prompts)
-- Actions retournees par l'API (liste complete)
+- Titre = nom de session
+- Nom + ID de session (pour retrouver la discussion via l'API)
+- Sequence de prompts (un par etape/appel API)
+- Actions retournees par l'API (liste complete par etape)
 - Metrics par tour (screenshot, planning, execution)
 - Duree totale (somme de TOUS les echanges de la session)
 - Modele utilise
-- Date du test
 
 **Lien recette ↔ session** : chaque recette reference le nom et l'ID de la session.
 L'orchestrateur peut retrouver la session via `GET /v1/sessions` pour acceder aux
@@ -582,6 +598,7 @@ La liste ci-dessous est **mise a jour automatiquement par l'API** quand une tach
 <!-- RECIPES_START -->
 | Fichier | Description | Duree | Modele | Session | Date |
 |---------|-------------|-------|--------|---------|------|
+| `recipe_ouvrir-calc-et-42x3_3m27s.md` | ouvrir-calc-et-42x3 | 3m27s | Flash | ouvrir-calc-et-42x3 | 2026-02-08 |
 <!-- RECIPES_END -->
 
 #### Principes des recettes
