@@ -436,17 +436,18 @@ l'orchestrateur s'adapte.
 
 ### Boucle d'execution de l'orchestrateur
 
-**Etape 0 — Observation initiale (AVANT toute action) :**
+**Etape 0 — Screenshot initial (AVANT toute action) :**
 ```
-1. Envoyer un message neutre : "Regarde l ecran et dis moi ce que tu vois"
-2. Recuperer la reponse + screenshot_url
-3. Fetcher le screenshot pour voir l'etat initial de l'ecran
+1. Envoyer : "Bonjour, je suis ton orchestrateur. Au prochain message je t enverrai tes instructions."
+2. Recuperer la reponse + screenshot_url (le screenshot est pris automatiquement a chaque tour)
+3. Fetcher le screenshot pour voir l'etat actuel de l'ecran
 4. A partir de la, decider quelles etapes envoyer
 ```
 
-Ce premier message ne fait aucune action — il sert juste a obtenir un screenshot de depart.
-L'orchestrateur a besoin de connaitre l'etat de l'ecran AVANT de planifier ses actions.
-Peut-etre que l'app est deja ouverte, peut-etre qu'il y a un popup, etc.
+Ce message ne demande RIEN a l'agent — pas de description, pas d'action. Il sert uniquement
+a trigger le screenshot automatique. Evite "dis moi ce que tu vois" car l'agent perdrait du
+temps a decrire l'ecran (et risquerait de cliquer quelque part). L'orchestrateur va analyser
+le screenshot lui-meme juste apres.
 
 **Etapes suivantes — Pour chaque action de la recette :**
 ```
