@@ -401,12 +401,19 @@ curl -s -X POST "http://192.168.11.13:3000/v1/sessions" \
   -d '{"name":"ma-session","model":"gemini-3-flash-preview"}'
 ```
 
+### Reflexe autonome
+
+**REGLE** : quand j'ai besoin de GACUA, je DOIS d'abord tenter de me debrouiller seul :
+1. Tester si le serveur tourne : `curl -s --max-time 2 http://192.168.11.13:3000/api/health`
+2. Si pas de reponse → lancer le serveur moi-meme (procedure ci-dessus)
+3. Si reponse 403 (serveur tourne, token inconnu) → demander le token a Romain
+   (c'est le seul cas ou je dois demander)
+
 ### Quand Romain donne le token
 
 Souvent Romain colle l'URL du serveur dans le chat :
 `http://192.168.11.13:3000?token=abc123...`
 → Extraire le token de l'URL et l'utiliser directement.
-→ Pas besoin de lancer le serveur, il tourne deja.
 
 ### Arreter le serveur
 
