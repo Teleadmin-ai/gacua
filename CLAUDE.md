@@ -628,11 +628,85 @@ La liste ci-dessous est **mise a jour automatiquement par l'API** quand une tach
 
 - **Etre explicite** dans chaque prompt ("Clique sur le champ Objet" > "Remplis le mail")
 - **Utiliser les metrics** pour comparer les variantes (temps total, nb de tours)
-- **Sauvegarder TOUTE recette qui reussit** pour la reutiliser et la raffiner
 - **Flash gere des instructions multi-etapes** : pour des taches simples, un seul message suffit
   (ex: "Ouvre la calculatrice" → Flash fait 3 tours en 44s en autonome)
 - **Decomposer les workflows longs** : pour 5+ etapes avec verification intermediaire,
   envoyer message par message et sauvegarder la sequence complete
+
+### Gestion des sessions et experimentation
+
+#### Cycle de vie d'une session
+
+Chaque session = une discussion avec GACUA = un historique de messages + screenshots.
+Les sessions **occupent de l'espace disque** (screenshots PNG) et **encombrent la liste**.
+L'orchestrateur DOIT gerer activement leur cycle de vie.
+
+```
+Session creee → Etapes executees → Recette sauvegardee → Session evaluee
+                                                              ↓
+                                        ┌─────────────┬──────┴──────┐
+                                        ↓             ↓             ↓
+                                    GARDER        SUPPRIMER     EXPERIMENTER
+                                  (meilleure)    (doublon ou     (variante
+                                                  echec)        a comparer)
+```
+
+#### Quand SUPPRIMER une session
+
+Apres chaque tache, se demander : **"Cette session a-t-elle encore de la valeur ?"**
+
+Supprimer (`DELETE /v1/sessions/:id`) quand :
+- **Echec** : la tache n'a pas abouti (erreurs, mauvais clics, timeout)
+- **Doublon inferieur** : une meilleure recette existe pour la meme tache
+  (moins de tours, duree plus courte, moins d'actions inutiles)
+- **Test jetable** : session de debug/experimentation dont la recette capture deja l'essentiel
+- **Session sans recette** : observation pure (message neutre) sans action utile
+
+Garder quand :
+- **Meilleure de sa categorie** : meilleurs metrics pour cette tache
+- **Screenshots utiles** : preuves visuelles encore necessaires
+- **Session active** : workflow en cours, pas encore termine
+
+#### Workflow d'experimentation (A/B testing)
+
+Pour optimiser une recette, l'orchestrateur PEUT tester plusieurs approches :
+
+```
+1. NOMMER les sessions avec un suffixe de variante :
+   - "ouvrir-calc-v1-menu-demarrer"
+   - "ouvrir-calc-v2-raccourci-clavier"
+   - "ouvrir-calc-v3-barre-recherche"
+
+2. EXECUTER chaque variante → recette sauvegardee automatiquement
+
+3. COMPARER les metrics :
+   | Variante | Turns | Duree | Actions inutiles |
+   |----------|-------|-------|------------------|
+   | v1 menu  | 3     | 44s   | 0                |
+   | v2 raccourci | 2 | 25s   | 0                |
+   | v3 barre | 4     | 55s   | 1 (clic rate)    |
+
+4. GARDER la meilleure recette, SUPPRIMER les sessions perdantes
+   → DELETE sessions v1 et v3
+   → Garder v2 comme reference
+
+5. RENOMMER si besoin la recette gagnante (manuellement dans recipes/)
+```
+
+#### Limite de sessions et menage regulier
+
+**Regle** : ne pas depasser ~100 sessions. Au-dela, faire le menage :
+
+```
+1. Lister : GET /v1/sessions
+2. Identifier les categories (par prefixe de nom)
+3. Pour chaque categorie : garder la meilleure, supprimer le reste
+4. Supprimer les sessions de plus de 7 jours sans recette associee
+5. Supprimer les sessions "api-{timestamp}" auto-creees (tests sans nom)
+```
+
+Le menage est un **reflexe**, pas une corvee. Apres chaque experimentation,
+supprimer les sessions inutiles fait partie du workflow.
 
 ### Exemple reel — Ouvrir la calculatrice (avec metrics)
 
