@@ -79,10 +79,10 @@ Le bottleneck est le temps des 2 appels API + le thinking de Gemini.
 
 ### Points d'appel API :
 
-| Lieu | Ligne | Type | Input | Output |
-|------|-------|------|-------|--------|
-| `agent.ts` | 485 | Planning | Screenshots + historique | Texte + function calls |
-| `agent.ts` | 90 | Grounding | 1 crop + description | JSON bounding box |
+| Lieu | Type | Input | Output |
+|------|------|-------|--------|
+| `agent.ts` (boucle principale) | Planning | Screenshots + historique | Texte + function calls |
+| `agent.ts` (grounding agent) | Grounding | 1 crop + description | JSON bounding box |
 
 ### Features Gemini utilisees :
 
@@ -155,7 +155,7 @@ Les noms Gemini natifs sont aussi acceptes directement.
 // Request
 {
   "model": "gacua-gemini-3-pro",
-  "session_id": "2025-02-08T...",   // optionnel, auto-cree si absent
+  "session_id": "2026-02-08T...",   // optionnel, auto-cree si absent
   "messages": [
     { "role": "user", "content": "Ouvre Firefox et va sur google.com" }
   ],
@@ -173,7 +173,7 @@ Les noms Gemini natifs sont aussi acceptes directement.
     "finish_reason": "stop"
   }],
   "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0 },
-  "session_id": "2025-02-08T..."
+  "session_id": "2026-02-08T..."
 }
 ```
 
@@ -424,7 +424,6 @@ taskkill /PID <pid> /F
 netstat -ano | findstr :10001
 taskkill /PID <pid> /F
 ```
-```
 
 ## Authentification Gemini
 
@@ -440,78 +439,17 @@ GACUA reutilise la config de Gemini CLI :
 | 3000  | Backend Express + WebSocket + Frontend |
 | 10001 | MCP Computer Server (SSE) |
 
-## API REST existante (avec token)
-
-### API interne (/api/*)
-
-| Methode | Endpoint | Description |
-|---------|----------|-------------|
-| GET | /api/health?token=T | Health check |
-| GET | /api/sessions?token=T | Lister les sessions |
-| POST | /api/sessions?token=T | Creer une session |
-| GET | /api/sessions/:id?token=T | Details session |
-| DELETE | /api/sessions/:id?token=T | Supprimer une session |
-| GET | /api/sessions/:id/messages?token=T | Messages d'une session |
-| GET | /images/:sessionId/:fileName?token=T | Image screenshot |
-| WS | ws://localhost:3000 | WebSocket (streaming commandes/reponses) |
-
-### API OpenAI-compatible (/v1/*) — Bearer ou ?token=
-
-| Methode | Endpoint | Description |
-|---------|----------|-------------|
-| GET | /v1/models | Modeles disponibles |
-| GET | /v1/sessions | Sessions existantes |
-| POST | /v1/sessions | Creer une session |
-| DELETE | /v1/sessions/:id | Supprimer une session |
-| GET | /v1/sessions/:id/messages | Historique texte |
-| POST | /v1/chat/completions | Envoyer un ordre, recevoir le feedback |
-
-## Orchestration par API — Pattern Step-by-Step
+## Orchestration par API
 
 ### Principe fondamental
 
 L'agent GACUA a une boucle `while(true)` : apres chaque action, il reprend un screenshot,
-le renvoie a Gemini, et Gemini decide s'il veut agir encore ou s'arreter (0 function calls → stop).
+le renvoie a Gemini, et Gemini decide s'il veut agir encore ou s'arreter (via `computer_done`).
 
 **Flash peut enchainer plusieurs actions de facon autonome** pour une instruction complete.
 Par exemple "Ouvre Notepad, tape du texte, et sauvegarde" → Flash fait 4+ tours tout seul.
 Mais pour des workflows complexes (ex: envoyer un email Gmail), il est plus fiable de
 **decomposer en etapes atomiques** envoyees sequentiellement via l'API.
-
-### Exemple : envoyer un email Gmail
-
-```bash
-TOKEN="Bearer xxx"
-URL="http://192.168.11.13:3000"
-
-# 1. Creer une session
-SESSION=$(curl -s -X POST "$URL/v1/sessions" -H "Authorization: $TOKEN" \
-  -H "Content-Type: application/json" -d '{"name":"gmail"}' | jq -r '.id')
-
-# 2. Etape par etape (attendre chaque reponse avant la suivante)
-curl -s -X POST "$URL/v1/chat/completions" -H "Authorization: $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{\"model\":\"gacua-gemini-3-flash\",\"session_id\":\"$SESSION\",
-       \"messages\":[{\"role\":\"user\",\"content\":\"Ouvre le navigateur et va sur gmail.com\"}]}"
-
-curl -s -X POST "$URL/v1/chat/completions" ...
-  "Clique sur l icone profil en haut a droite et selectionne le compte user@example.com"
-
-curl -s -X POST "$URL/v1/chat/completions" ...
-  "Clique sur Nouveau message"
-
-curl -s -X POST "$URL/v1/chat/completions" ...
-  "Dans le champ destinataire, tape dest@example.com et appuie sur Entree"
-
-curl -s -X POST "$URL/v1/chat/completions" ...
-  "Clique sur le champ Objet et tape: mon objet"
-
-curl -s -X POST "$URL/v1/chat/completions" ...
-  "Clique dans le corps du mail et tape: mon message"
-
-curl -s -X POST "$URL/v1/chat/completions" ...
-  "Clique sur le bouton Envoyer"
-```
 
 ### Architecture orchestrateur / executeur
 
@@ -544,7 +482,7 @@ L'orchestrateur est le cerveau qui planifie les grandes etapes, observe et s'ada
 │  - Boucle: Screenshot → Planning → Grounding → Exec  │
 │  - Enchaine les actions de facon autonome             │
 │  - S'arrete via computer_done (signal explicite)      │
-│  - Retourne : texte + screenshot_url                 │
+│  - Retourne : texte + screenshot_url + metrics        │
 │  - Ne memorise rien entre les sessions               │
 │                                                      │
 └─────────────────────────────────────────────────────┘
@@ -689,23 +627,6 @@ La liste ci-dessous est **mise a jour automatiquement par l'API** quand une tach
 - **Decomposer les workflows longs** : pour 5+ etapes avec verification intermediaire,
   envoyer message par message et sauvegarder la sequence complete
 
-#### Exemple de recette a tester : "Envoyer un email Gmail"
-```
-1. "Ouvre le navigateur et va sur gmail.com"
-   → Verifier : page Gmail visible
-2. "Clique sur Nouveau message"
-   → Verifier : fenetre de composition ouverte
-3. "Dans le champ destinataire, tape {to} et appuie sur Entree"
-   → Verifier : adresse affichee dans le champ
-4. "Clique sur le champ Objet et tape: {subject}"
-   → Verifier : objet visible
-5. "Clique dans le corps du mail et tape: {body}"
-   → Verifier : texte visible dans le corps
-6. "Clique sur le bouton Envoyer"
-   → Verifier : message "Message envoye" ou boite de reception
-→ Sauvegarder en recipe_envoyer-email-gmail_{duree}.md si OK
-```
-
 ### Exemple reel — Ouvrir la calculatrice (avec metrics)
 
 ```bash
@@ -739,19 +660,8 @@ curl -s -X POST "$URL/v1/chat/completions" -H "Authorization: $TOKEN" \
 Lecture des metrics : le bottleneck est `planningMs` (6-13s = temps de reflexion Gemini).
 `screenshotMs` (500-700ms) et `executionMs` (3-5s) sont rapides.
 
-### Conseils techniques
-
-- **computer_done** : Flash appelle `computer_done` quand il a fini (rappel injecte automatiquement)
-- **Toujours verifier le screenshot** : apres CHAQUE message, c'est la source de verite
-- **Attendre la reponse** : ne jamais envoyer le message suivant avant d'avoir la reponse
-- **Flash suffit** : fiable pour la plupart des taches depuis les fixes
-- **Utiliser les metrics** : `planningMs` = temps Gemini, `screenshotMs` = temps MCP, `executionMs` = grounding + action
-- **~10-20s par tour** : screenshot (~0.5s) + planning (~7-13s) + execution (~3-5s)
-- **Timeout MCP 30s** : si la connexion SSE tombe, le run echoue en 30s max (pas 10 min)
-
 ### Screenshots — Stockage et acces
 
-Les screenshots sont stockes dans le dossier de session :
 ```
 .gemini/gacua_sessions/{sessionId}/images/
   {timestamp}_screenshot.png           # Screenshot complet (3072x1728)
@@ -763,92 +673,19 @@ Les screenshots sont stockes dans le dossier de session :
 
 **Acces HTTP** : `GET /images/{sessionId}/{fileName}?token=T`
 
-Les messages persistants referent aux images via `internal://{sessionId}/{fileName}`.
-Le frontend web affiche les screenshots dans la conversation.
+## Pieges connus
 
-### Reponse API enrichie (screenshot + metrics)
-
-La reponse de `/v1/chat/completions` inclut :
-- `screenshot_url` — dernier screenshot complet pris par l'agent
-- `metrics` — timings detailles par tour (voir modif 14, 15)
-
-```json
-{
-  "choices": [{ "message": { "content": "Actions performed:\n1. click...\n2. type...\n3. computer_done(...)" } }],
-  "session_id": "2026-02-08T...",
-  "screenshot_url": "/images/2026-02-08T.../...screenshot.png",
-  "metrics": {
-    "turns": [
-      {"turn":1, "screenshotMs":693, "planningMs":6732, "executionMs":3620, "totalMs":11045, "actions":[...]},
-      {"turn":2, "screenshotMs":588, "planningMs":13474, "executionMs":5392, "totalMs":19454, "actions":[...]}
-    ],
-    "totalMs": 43739
-  }
-}
-```
-
-L'orchestrateur utilise ces donnees pour :
-1. **Verifier** : `GET {screenshot_url}?token=T` → analyser l'image avec son propre modele vision
-2. **Mesurer** : comparer `totalMs` entre recettes pour optimiser les workflows
-3. **Diagnostiquer** : `planningMs` eleve = Gemini reflechit trop, `screenshotMs` eleve = MCP lent
-4. **Adapter** : si `metrics.turns` montre trop de tours, simplifier l'instruction
-
-**Fichier** : `packages/gacua/backend/src/api/openai-compat.ts`
-- `collectAgentResponse()` track screenshot + metrics depuis les events
-- Filtre screenshots : seuls les complets (`_screenshot.png`), pas les crops
-- Disponible en mode non-streaming et streaming (dans le dernier chunk)
-
-## Bugs connus / TODO
-
-### Leak de connexions MCP (CORRIGE)
-Chaque appel a `runComputerUseAgent()` cree un nouveau `Config` → `config.initialize()` →
-ouvre une nouvelle connexion SSE au serveur MCP (port 10001).
-
-**Fix** : `closeAllMcpClients()` dans `packages/core/src/tools/mcp-client.ts` :
-- Map `activeMcpClients` track les connexions MCP ouvertes
-- `closeAllMcpClients()` ferme toutes les connexions et clear la map
-- Appele dans le `finally` block de `runComputerUseAgent()` (interface.ts)
-- Verifie : 0 connexions apres chaque appel, pas de regression sur appels sequentiels
-
-**ATTENTION — Config caching INTERDIT** : une tentative de cacher le Config au niveau module
-pour reutiliser la connexion MCP a completement casse le controle du PC.
-Chaque appel DOIT creer un nouveau Config. La solution est de fermer apres, pas de reutiliser.
-
-### Flash 3 : grounding error image_id/element_description (CORRIGE)
-Flash envoyait `image_id` sans `element_description`, causant l'erreur de validation.
-Ce n'etait PAS un bug du code mais un comportement du modele.
-**Fix** : descriptions renforcees dans les tool declarations (type.ts, scroll.ts) — voir modif 10.
-**Consequence** : avant le fix, Flash semblait ne faire qu'une action (echouait a la 2eme).
-Apres le fix, Flash enchaine les actions de facon autonome.
-
-### Flash 3 : image_id hors limites (CORRIGE)
-Flash demandait `image_id: 3` alors que les indices valides sont 0-2.
-**Fix** : le nombre de crops et la plage d'indices est communique dans la description du screenshot — voir modif 12.
-
-### MCP timeout de 10 minutes (CORRIGE)
-Le timeout par defaut du MCP client etait 10 min. Quand la connexion SSE tombait,
-le run attendait 10 min pour rien avant de fail.
-**Fix** : timeout de 30s pour le serveur MCP `.computer` — voir modif 11.
-
-### Flash 3 : boucle infinie sans signal d'arret (CORRIGE)
-Apres les fixes 10-12, Flash enchainait les actions avec succes mais ne s'arretait jamais.
-La boucle `while(true)` continuait car Flash retournait toujours des function calls.
-Le mecanisme "0 function calls → stagnant" ne marchait pas car Flash trouvait toujours
-quelque chose a faire sur l'ecran.
-**Fix** : outil `computer_done` + rappel apres les images — voir modif 13.
-
-### Flash 3 : texte parasite dans les reponses
-Gemini 3 Flash emet parfois des chiffres parasites ("0", "2") comme text parts a cote de ses
-function calls et thoughts. Ces chiffres apparaissent dans l'interface web. C'est un comportement
-du modele Flash, pas un bug du code. Pro ne le fait pas.
+- **Config caching INTERDIT** : chaque appel DOIT creer un nouveau `Config`. Le cache casse
+  les outils MCP. Fermer apres (`closeAllMcpClients()`), pas reutiliser.
+- **Flash : texte parasite** : Flash emet parfois des chiffres parasites ("0", "2") comme text
+  parts a cote de ses function calls. Comportement du modele, pas un bug du code. Pro ne le fait pas.
+- **systemInstruction incompatible avec Flash** : ajouter un `systemInstruction` a l'appel planning
+  (avec thinking + function calling) fait hang la requete indefiniment. Les tool descriptions suffisent.
 
 ## Notes
 
 - Le selecteur de modele est **par session** : changer de modele necessite une nouvelle session
-- Flash est plus rapide et fiable pour le grounding depuis les fixes des tool descriptions (modif 10, 12)
 - Si erreur "EADDRINUSE" : `netstat -ano | findstr :10001` puis `taskkill /PID <pid> /F` (dans cmd.exe)
-- Les screenshots sont croppes en carres avec 50% de chevauchement pour couvrir tout l'ecran
-- GPU local possible pour le grounding (modele vision leger type Qwen-VL) pour reduire la latence
-- Resolution ecran actuelle : 3072x1728 (screenshots MCP captures a cette resolution)
-- **systemInstruction incompatible avec Flash** : ajouter un `systemInstruction` a l'appel planning
-  (avec thinking + function calling) fait hang la requete indefiniment. Les tool descriptions suffisent.
+- Les screenshots sont croppes en carres 768x768 avec 50% de chevauchement
+- Resolution ecran : 3072x1728
+- **~10-20s par tour** : screenshot (~0.5s) + planning (~7-13s) + execution (~3-5s)
