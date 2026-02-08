@@ -436,7 +436,19 @@ l'orchestrateur s'adapte.
 
 ### Boucle d'execution de l'orchestrateur
 
-Pour chaque etape d'une recette :
+**Etape 0 — Observation initiale (AVANT toute action) :**
+```
+1. Envoyer un message neutre : "Regarde l ecran et dis moi ce que tu vois"
+2. Recuperer la reponse + screenshot_url
+3. Fetcher le screenshot pour voir l'etat initial de l'ecran
+4. A partir de la, decider quelles etapes envoyer
+```
+
+Ce premier message ne fait aucune action — il sert juste a obtenir un screenshot de depart.
+L'orchestrateur a besoin de connaitre l'etat de l'ecran AVANT de planifier ses actions.
+Peut-etre que l'app est deja ouverte, peut-etre qu'il y a un popup, etc.
+
+**Etapes suivantes — Pour chaque action de la recette :**
 ```
 1. Envoyer le prompt a GACUA (POST /v1/chat/completions)
 2. Lire la reponse texte (description de ce que l'agent a fait)
