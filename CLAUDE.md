@@ -358,6 +358,74 @@ npm run dev:gacua
 # IMPORTANT: ne PAS utiliser npx gacua ou gacua (version npm, pas locale)
 ```
 
+## Demarrer GACUA et recuperer le token (procedure orchestrateur)
+
+L'orchestrateur (moi, Claude) peut lancer le serveur GACUA et recuperer le token
+automatiquement sans intervention humaine.
+
+### Token : comment ca marche
+
+- **Genere au demarrage** : 32 bytes random → 64 caracteres hex
+- **En memoire uniquement** : pas de fichier, pas d'env var, pas dans les logs
+- **Imprime dans le stdout** : la seule source est le console output du serveur
+- **Expire en 24h** : apres ca, il faut redemarrer le serveur
+- **Fichier** : `packages/gacua/backend/src/auth/token.ts`
+
+### Procedure complete
+
+```bash
+# 1. Verifier si le serveur tourne deja
+curl -s --max-time 2 http://192.168.11.13:3000/api/health 2>/dev/null
+# Si reponse 403 → serveur tourne mais token inconnu (demander a Romain)
+# Si timeout/erreur → serveur pas lance, continuer ci-dessous
+
+# 2. Build si necessaire (apres modif code)
+cd ~/gacua && npm run build
+
+# 3. Lancer le serveur en background et capturer le stdout
+cd ~/gacua && npm run start:gacua > /tmp/gacua-start.log 2>&1 &
+sleep 15  # Attendre l'auth Gemini + demarrage Express
+
+# 4. Extraire le token du stdout
+GACUA_TOKEN=$(grep -oP 'token=\K[0-9a-f]{64}' /tmp/gacua-start.log | head -1)
+echo "Token: $GACUA_TOKEN"
+
+# 5. Verifier que ca marche
+curl -s "http://192.168.11.13:3000/api/health?token=$GACUA_TOKEN"
+# → {"message":"healthy"}
+
+# 6. Utiliser l'API
+curl -s -X POST "http://192.168.11.13:3000/v1/sessions" \
+  -H "Authorization: Bearer $GACUA_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"ma-session","model":"gemini-3-flash-preview"}'
+```
+
+### Quand Romain donne le token
+
+Souvent Romain colle l'URL du serveur dans le chat :
+`http://192.168.11.13:3000?token=abc123...`
+→ Extraire le token de l'URL et l'utiliser directement.
+→ Pas besoin de lancer le serveur, il tourne deja.
+
+### Arreter le serveur
+
+```bash
+# Trouver et tuer le process
+# Option 1 : si lance en background dans ce shell
+kill %1
+
+# Option 2 : trouver le PID
+# Sur Windows (cmd.exe, pas bash) :
+netstat -ano | findstr :3000
+taskkill /PID <pid> /F
+
+# Option 3 : tuer aussi le MCP server
+netstat -ano | findstr :10001
+taskkill /PID <pid> /F
+```
+```
+
 ## Authentification Gemini
 
 GACUA reutilise la config de Gemini CLI :
