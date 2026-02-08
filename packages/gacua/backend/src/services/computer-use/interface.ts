@@ -144,19 +144,30 @@ async function recoverHistory(sessionId: string) {
     true,
   );
 
-  const getHistoryMessages = async () =>
-    await Promise.all(
+  // Strip images from history to save tokens — Gemini's text descriptions
+  // of previous screenshots are sufficient context. Only the CURRENT turn's
+  // screenshots (added live by agent.ts) need to be images.
+  const getHistoryMessages = async () => {
+    const messages = await Promise.all(
       persistentMessages
         .filter((message) => message.forDisplay !== true)
-        .map(async (message) => ({
-          role: message.role === 'model' ? 'model' : 'user',
-          parts: await Promise.all(
-            message.content.map(async (block) => {
-              return persistentContentBlockToPart(block, sessionId);
-            }),
-          ),
-        })),
+        .map(async (message) => {
+          const nonImageBlocks = message.content.filter(
+            (block) => !('image' in block),
+          );
+          if (nonImageBlocks.length === 0) return null;
+          return {
+            role: message.role === 'model' ? 'model' : 'user',
+            parts: await Promise.all(
+              nonImageBlocks.map(async (block) => {
+                return persistentContentBlockToPart(block, sessionId);
+              }),
+            ),
+          };
+        }),
     );
+    return messages.filter((m) => m !== null);
+  };
 
   const toolReviewRequests: ToolReviewRequest[] = [];
   const toolReviewResponses: ToolReviewResponse[] = [];
