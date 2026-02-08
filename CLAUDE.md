@@ -553,16 +553,44 @@ C'est la difference entre un script rigide et un agent intelligent.
 Une recette est une sequence de prompts validee pour une tache courante.
 Les recettes sont ameliorees au fil du temps grace aux metrics et aux retours.
 
-Principes :
-- **Etre explicite** dans chaque prompt ("Clique sur le champ Objet" > "Remplis le mail")
-- **Utiliser les metrics** pour comparer les variantes de recettes (temps total, nb de tours)
-- **Sauvegarder les recettes qui marchent** pour les reutiliser et les raffiner
-- **Flash gere des instructions multi-etapes** : pour des taches simples, un seul message suffit
-  (ex: "Ouvre la calculatrice et fais 42×3" → Flash fait 8 actions en autonome)
-- **Decomposer les workflows longs** : pour 5+ etapes avec verification intermediaire,
-  envoyer message par message
+#### Sauvegarde automatique des recettes
 
-Exemple de recette "Envoyer un email Gmail" :
+Quand une tache GACUA reussit, l'orchestrateur DOIT sauvegarder la recette complete.
+La reponse API contient tout : actions effectuees, metrics, screenshot final.
+
+**Emplacement** : `C:\Users\teleadmin\.claude\projects\C--Users-teleadmin\memory\recipes\`
+**Nommage** : `recipe_{sujet}_{duree}.md`
+
+Contenu d'une recette :
+- Prompt envoye (ou sequence de prompts)
+- Actions retournees par l'API (liste complete)
+- Metrics par tour (screenshot, planning, execution)
+- Duree totale
+- Modele utilise
+- Date du test
+- Notes (astuces, pieges, adaptations)
+
+**IMPORTANT** : je DOIS maintenir la liste des recettes a jour dans cette section.
+Quand une recette est ajoutee ou mise a jour, mettre a jour la liste ci-dessous.
+
+#### Liste des recettes existantes
+
+| Fichier | Description | Duree | Modele | Date |
+|---------|-------------|-------|--------|------|
+| `recipe_ouvrir-calculatrice_44s.md` | Ouvrir Calculatrice via menu Demarrer | 44s | Flash | 2026-02-08 |
+| `recipe_calculatrice-42x3_120s.md` | Calculer 42×3 dans la Calculatrice | ~120s | Flash | 2026-02-08 |
+
+#### Principes des recettes
+
+- **Etre explicite** dans chaque prompt ("Clique sur le champ Objet" > "Remplis le mail")
+- **Utiliser les metrics** pour comparer les variantes (temps total, nb de tours)
+- **Sauvegarder TOUTE recette qui reussit** pour la reutiliser et la raffiner
+- **Flash gere des instructions multi-etapes** : pour des taches simples, un seul message suffit
+  (ex: "Ouvre la calculatrice" → Flash fait 3 tours en 44s en autonome)
+- **Decomposer les workflows longs** : pour 5+ etapes avec verification intermediaire,
+  envoyer message par message et sauvegarder la sequence complete
+
+#### Exemple de recette a tester : "Envoyer un email Gmail"
 ```
 1. "Ouvre le navigateur et va sur gmail.com"
    → Verifier : page Gmail visible
@@ -576,6 +604,7 @@ Exemple de recette "Envoyer un email Gmail" :
    → Verifier : texte visible dans le corps
 6. "Clique sur le bouton Envoyer"
    → Verifier : message "Message envoye" ou boite de reception
+→ Sauvegarder en recipe_envoyer-email-gmail_{duree}.md si OK
 ```
 
 ### Exemple reel — Ouvrir la calculatrice (avec metrics)
