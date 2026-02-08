@@ -558,9 +558,11 @@ A terme, OpenClaw prendra ce role depuis un serveur distant.
 Quand Romain demande de piloter GACUA, je DOIS suivre ce protocole complet.
 Ce n'est PAS une liste de conseils, c'est la procedure de travail.
 
-#### Phase 1 — OBSERVER la scene
+#### Phase 1 — OBSERVER la scene (NE JAMAIS SAUTER CETTE ETAPE)
 
 Avant toute action, l'orchestrateur DOIT voir l'ecran pour comprendre l'etat initial.
+**C'est l'etape la plus souvent oubliee** et elle cause des actions inutiles
+(ex: ouvrir une app qui est deja ouverte, naviguer vers une page deja affichee).
 
 ```
 1. Envoyer un message neutre a GACUA (trigger screenshot sans action)
@@ -568,7 +570,11 @@ Avant toute action, l'orchestrateur DOIT voir l'ecran pour comprendre l'etat ini
 2. Recuperer la reponse + screenshot_url
 3. Fetcher le screenshot (GET {screenshot_url}?token=T)
 4. Analyser l'image : quelles fenetres sont ouvertes ? quel etat ?
+5. Adapter le plan en fonction de ce qui est DEJA visible a l'ecran
 ```
+
+**Piege classique** : la calculatrice (ou autre app) est deja ouverte d'un test precedent.
+Sans Phase 1, on la relance pour rien. Toujours regarder avant d'agir.
 
 #### Phase 2 — PLANIFIER la sequence complete
 
