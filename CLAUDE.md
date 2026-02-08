@@ -380,15 +380,17 @@ L'orchestrateur est le cerveau qui planifie, observe et s'adapte.
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│              ORCHESTRATEUR (Claude, GPT, etc.)       │
+│              ORCHESTRATEUR                            │
+│  Actuellement : Claude Code (ce fichier)             │
+│  Futur : OpenClaw (serveur distant)                  │
 │                                                      │
-│  1. Charge une "recette" (sequence de prompts)       │
-│  2. Envoie etape 1 a GACUA                          │
-│  3. Lit la reponse texte (description de l'ecran)    │
-│  4. Optionnel : fetch screenshot_url pour VOIR       │
-│  5. Adapte l'etape suivante si besoin                │
-│  6. Envoie etape 2, etc.                             │
-│  7. Sauvegarde/ameliore la recette si ca a marche    │
+│  1. Message neutre → screenshot initial              │
+│  2. Analyse le screenshot (vision)                   │
+│  3. Decide la prochaine action                       │
+│  4. Envoie l'instruction a GACUA                     │
+│  5. Fetch le screenshot → verifie le resultat        │
+│  6. Boucle jusqu'a la fin de la tache                │
+│  7. Sauvegarde/ameliore la recette                   │
 │                                                      │
 └──────────────┬──────────────────────────────────────┘
                │  API /v1/chat/completions
@@ -403,6 +405,11 @@ L'orchestrateur est le cerveau qui planifie, observe et s'adapte.
 │                                                      │
 └─────────────────────────────────────────────────────┘
 ```
+
+**Note** : Claude Code (moi) est l'orchestrateur principal pour le moment.
+Quand Romain demande de piloter GACUA, je DOIS suivre le protocole complet :
+message neutre initial, fetch systematique des screenshots, adaptation dynamique.
+A terme, OpenClaw prendra ce role depuis un serveur distant.
 
 ### Recettes (prompts qui marchent)
 
