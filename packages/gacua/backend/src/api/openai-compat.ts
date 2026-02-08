@@ -405,13 +405,23 @@ apiRouter.post('/v1/chat/completions', validateToken, async (req, res) => {
   try {
     // Resolve or create session
     let sessionId = body.session_id;
+    let sessionName: string;
     if (!sessionId) {
+      const autoName = `api-${Date.now()}`;
       const session = await sessionManager.createSession({
-        name: `api-${Date.now()}`,
+        name: autoName,
         model: geminiModel,
       });
       sessionId = session.id;
+      sessionName = autoName;
       apiLogger.info({ sessionId }, 'Auto-created session for chat completion');
+    } else {
+      try {
+        const session = await sessionManager.getSession(sessionId);
+        sessionName = session.name ?? sessionId;
+      } catch {
+        sessionName = sessionId;
+      }
     }
 
     // Helper: append step to session recipe (fire-and-forget, accumulates across session)
@@ -420,6 +430,7 @@ apiRouter.post('/v1/chat/completions', validateToken, async (req, res) => {
         const summary = extractDoneSummary(result.text) ?? null;
         appendRecipeStep(
           sessionId!,
+          sessionName,
           geminiModel,
           lastUserMessage.content,
           result.actions,

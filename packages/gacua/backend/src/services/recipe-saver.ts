@@ -43,6 +43,7 @@ interface RecipeStep {
 /** Accumulated session recipe */
 interface SessionRecipe {
   sessionId: string;
+  sessionName: string;
   model: string;
   steps: RecipeStep[];
   startedAt: Date;
@@ -89,7 +90,7 @@ function buildRecipeContent(recipe: SessionRecipe): string {
   content += `- **Date** : ${date}\n`;
   content += `- **Modele** : ${recipe.model}\n`;
   content += `- **Duree totale** : ${duration} (${recipe.steps.length} etapes, ${totalTurns} tours)\n`;
-  content += `- **Session** : ${recipe.sessionId}\n`;
+  content += `- **Session** : \`${recipe.sessionName}\` (id: \`${recipe.sessionId}\`)\n`;
   content += `- **Statut** : OK\n\n`;
 
   // Steps
@@ -135,6 +136,7 @@ async function updateClaudeMdRecipeList(
   duration: string,
   model: string,
   date: string,
+  sessionName: string,
   oldFileName: string | null,
 ): Promise<void> {
   try {
@@ -161,7 +163,7 @@ async function updateClaudeMdRecipeList(
     const before = content.slice(0, endIdx2);
     const after = content.slice(endIdx2);
 
-    const newLine = `| \`${fileName}\` | ${description} | ${duration} | ${model} | ${date} |\n`;
+    const newLine = `| \`${fileName}\` | ${description} | ${duration} | ${model} | ${sessionName} | ${date} |\n`;
     const updated = before + newLine + after;
     await writeFile(CLAUDE_MD_PATH, updated, 'utf-8');
     recipeLogger.info({ fileName }, 'Updated CLAUDE.md recipe list');
@@ -176,6 +178,7 @@ async function updateClaudeMdRecipeList(
  */
 export async function appendRecipeStep(
   sessionId: string,
+  sessionName: string,
   model: string,
   prompt: string,
   actions: string[],
@@ -188,6 +191,7 @@ export async function appendRecipeStep(
     if (!recipe) {
       recipe = {
         sessionId,
+        sessionName,
         model,
         steps: [],
         startedAt: new Date(),
@@ -236,6 +240,7 @@ export async function appendRecipeStep(
       formatDuration(totalMs),
       formatModelShort(model),
       date,
+      recipe.sessionName,
       oldFileName,
     );
 

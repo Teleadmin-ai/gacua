@@ -555,29 +555,33 @@ Les recettes sont ameliorees au fil du temps grace aux metrics et aux retours.
 
 #### Sauvegarde automatique des recettes
 
-Quand une tache GACUA reussit, l'orchestrateur DOIT sauvegarder la recette complete.
-La reponse API contient tout : actions effectuees, metrics, screenshot final.
+L'API sauvegarde automatiquement une recette a chaque completion reussie.
+Les recettes **s'accumulent par session** : chaque appel API ajoute une etape,
+le fichier est reecrit avec la sequence complete, et le CLAUDE.md est mis a jour.
 
-**Emplacement** : `C:\Users\teleadmin\.claude\projects\C--Users-teleadmin\memory\recipes\`
+**Emplacement** : `recipes/` a la racine du projet
 **Nommage** : `recipe_{sujet}_{duree}.md`
 
 Contenu d'une recette :
+- Nom de session (= discussion dans l'API, accessible via `GET /v1/sessions`)
 - Prompt envoye (ou sequence de prompts)
 - Actions retournees par l'API (liste complete)
 - Metrics par tour (screenshot, planning, execution)
-- Duree totale
+- Duree totale (somme de TOUS les echanges de la session)
 - Modele utilise
 - Date du test
-- Notes (astuces, pieges, adaptations)
+
+**Lien recette ↔ session** : chaque recette reference le nom et l'ID de la session.
+L'orchestrateur peut retrouver la session via `GET /v1/sessions` pour acceder aux
+screenshots (`GET /images/{sessionId}/{fileName}?token=T`) et messages
+(`GET /v1/sessions/{sessionId}/messages`). C'est le pont entre la recette (texte)
+et les preuves visuelles (screenshots).
 
 La liste ci-dessous est **mise a jour automatiquement par l'API** quand une tache reussit.
-Les fichiers sont dans `recipes/` a la racine du projet.
 
 <!-- RECIPES_START -->
-| Fichier | Description | Duree | Modele | Date |
-|---------|-------------|-------|--------|------|
-| `recipe_ouvrir-calculatrice_44s.md` | Ouvrir Calculatrice via menu Demarrer | 44s | Flash | 2026-02-08 |
-| `recipe_calculatrice-42x3_120s.md` | Calculer 42×3 dans la Calculatrice | ~120s | Flash | 2026-02-08 |
+| Fichier | Description | Duree | Modele | Session | Date |
+|---------|-------------|-------|--------|---------|------|
 <!-- RECIPES_END -->
 
 #### Principes des recettes
