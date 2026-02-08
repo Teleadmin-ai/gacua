@@ -560,21 +560,25 @@ Ce n'est PAS une liste de conseils, c'est la procedure de travail.
 
 #### Phase 1 — OBSERVER la scene (NE JAMAIS SAUTER CETTE ETAPE)
 
-Avant toute action, l'orchestrateur DOIT voir l'ecran pour comprendre l'etat initial.
-**C'est l'etape la plus souvent oubliee** et elle cause des actions inutiles
-(ex: ouvrir une app qui est deja ouverte, naviguer vers une page deja affichee).
+**Regle** : avant toute action, se demander **"Est-ce que je sais ce qu'il y a a l'ecran ?"**
+- Si OUI (screenshot deja vu plus tot dans cette conversation) → passer a Phase 2
+- Si NON (premiere solicitation, ou doute) → **message neutre obligatoire**
+
+Le message neutre declenche un screenshot sans action de la part de Gemini :
 
 ```
-1. Envoyer un message neutre a GACUA (trigger screenshot sans action)
-   → "Bonjour, au prochain message je t enverrai tes instructions."
+1. Envoyer un message neutre a GACUA :
+   → "Bonjour, je suis ton orchestrateur."
+   (Gemini prend un screenshot, ne fait rien, et appelle computer_done)
 2. Recuperer la reponse + screenshot_url
 3. Fetcher le screenshot (GET {screenshot_url}?token=T)
 4. Analyser l'image : quelles fenetres sont ouvertes ? quel etat ?
 5. Adapter le plan en fonction de ce qui est DEJA visible a l'ecran
 ```
 
-**Piege classique** : la calculatrice (ou autre app) est deja ouverte d'un test precedent.
-Sans Phase 1, on la relance pour rien. Toujours regarder avant d'agir.
+**Pourquoi c'est critique** : sans ca, l'orchestrateur planifie a l'aveugle et fait des
+actions inutiles (ouvrir une app deja ouverte, naviguer vers une page deja affichee).
+L'ecran a pu changer entre deux conversations — ne jamais supposer, toujours verifier.
 
 #### Phase 2 — PLANIFIER la sequence complete
 
