@@ -411,8 +411,9 @@ testes et valides pour des taches courantes. Chaque recette est amelioree au fil
 
 Principes :
 - **Etre le plus explicite possible** dans chaque prompt ("Clique sur le champ Objet" > "Remplis le mail")
-- **S'appuyer sur la description textuelle** que GACUA retourne (il decrit ce qu'il voit a l'ecran)
-- **Fetcher le screenshot** quand la description n'est pas suffisante pour decider
+- **Toujours fetcher le screenshot apres chaque action** — c'est SYSTEMATIQUE, pas optionnel.
+  L'orchestrateur DOIT voir l'ecran pour verifier que l'action a reussi avant de continuer.
+  Le texte de GACUA est un complement, mais la verite c'est le screenshot.
 - **Adapter dynamiquement** : si l'ecran n'est pas dans l'etat attendu, ajuster le prompt suivant
 - **Sauvegarder les recettes qui marchent** pour les reutiliser et les raffiner
 - **Ne pas essayer de tout faire en un prompt** : decomposer, toujours decomposer
@@ -433,12 +434,26 @@ Chaque etape retourne du texte + un screenshot. L'orchestrateur verifie que l'ac
 avant de passer a la suivante. Si un ecran inattendu apparait (popup, CAPTCHA, erreur),
 l'orchestrateur s'adapte.
 
+### Boucle d'execution de l'orchestrateur
+
+Pour chaque etape d'une recette :
+```
+1. Envoyer le prompt a GACUA (POST /v1/chat/completions)
+2. Lire la reponse texte (description de ce que l'agent a fait)
+3. Fetcher le screenshot (GET {screenshot_url}?token=T) — OBLIGATOIRE
+4. Analyser le screenshot pour verifier que l'action a reussi
+5. Si OK → passer a l'etape suivante
+   Si KO → adapter le prompt et reessayer, ou signaler l'echec
+```
+
+Le screenshot est la **source de verite**. Le texte de GACUA est un complement utile
+mais l'orchestrateur ne doit jamais se fier uniquement au texte pour decider.
+
 ### Conseils techniques
 
 - **Une action = un message** : click, type, scroll, etc.
+- **Toujours verifier le screenshot** : apres CHAQUE action, sans exception
 - **Attendre la reponse** : ne jamais envoyer le message suivant avant d'avoir la reponse
-- **Lire le feedback texte** : GACUA decrit ce qu'il voit — c'est la source principale d'info
-- **Fetcher le screenshot** : quand le texte ne suffit pas, l'orchestrateur peut voir l'ecran
 - **Flash suffit** : pour des etapes simples et atomiques, Flash est aussi fiable que Pro
 - **~30s par etape** : 2 appels API Gemini (planning + grounding) + execution
 
