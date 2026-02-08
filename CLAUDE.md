@@ -570,15 +570,15 @@ Contenu d'une recette :
 - Date du test
 - Notes (astuces, pieges, adaptations)
 
-**IMPORTANT** : je DOIS maintenir la liste des recettes a jour dans cette section.
-Quand une recette est ajoutee ou mise a jour, mettre a jour la liste ci-dessous.
+La liste ci-dessous est **mise a jour automatiquement par l'API** quand une tache reussit.
+Les fichiers sont dans `recipes/` a la racine du projet.
 
-#### Liste des recettes existantes
-
+<!-- RECIPES_START -->
 | Fichier | Description | Duree | Modele | Date |
 |---------|-------------|-------|--------|------|
 | `recipe_ouvrir-calculatrice_44s.md` | Ouvrir Calculatrice via menu Demarrer | 44s | Flash | 2026-02-08 |
 | `recipe_calculatrice-42x3_120s.md` | Calculer 42×3 dans la Calculatrice | ~120s | Flash | 2026-02-08 |
+<!-- RECIPES_END -->
 
 #### Principes des recettes
 

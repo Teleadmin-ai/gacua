@@ -15,6 +15,7 @@ import { logger } from '../logger.js';
 import { validateTokenString } from '../auth/token.js';
 import { sessionManager } from '../services/session/index.js';
 import { runComputerUseAgent } from '../services/computer-use/interface.js';
+import { saveRecipe } from '../services/recipe-saver.js';
 import type {
   ServerEvent,
   PersistentMessageContentBlock,
@@ -85,6 +86,13 @@ function extractText(blocks: PersistentMessageContentBlock[]): string {
     )
     .map((b) => b.text)
     .join('\n');
+}
+
+function extractDoneSummary(text: string): string | null {
+  // Extract summary from computer_done action in the response text
+  // Format: computer_done({"summary":"..."})
+  const match = text.match(/computer_done\(\{[^}]*"summary"\s*:\s*"([^"]+)"/);
+  return match ? match[1] : null;
 }
 
 function extractActions(blocks: PersistentMessageContentBlock[]): string[] {
@@ -404,6 +412,20 @@ apiRouter.post('/v1/chat/completions', validateToken, async (req, res) => {
       apiLogger.info({ sessionId }, 'Auto-created session for chat completion');
     }
 
+    // Helper: save recipe after successful completion (fire-and-forget)
+    const trySaveRecipe = (result: AgentResult) => {
+      if (result.metrics && result.metrics.turns.length > 0) {
+        saveRecipe({
+          prompt: lastUserMessage.content,
+          actions: result.text.split('\n').filter((l) => /^\d+\./.test(l)),
+          turns: result.metrics.turns,
+          totalMs: result.metrics.totalMs,
+          model: geminiModel,
+          summary: extractDoneSummary(result.text) ?? lastUserMessage.content.slice(0, 80),
+        }).catch((err) => apiLogger.warn({ err }, 'Failed to save recipe'));
+      }
+    };
+
     if (body.stream) {
       // ---- Streaming (SSE) ------------------------------------------------
       res.setHeader('Content-Type', 'text/event-stream');
@@ -472,6 +494,7 @@ apiRouter.post('/v1/chat/completions', validateToken, async (req, res) => {
       res.write(`data: ${JSON.stringify(finalChunk)}\n\n`);
       res.write('data: [DONE]\n\n');
       res.end();
+      trySaveRecipe(streamResult);
     } else {
       // ---- Non-streaming --------------------------------------------------
       const result = await collectAgentResponse(
@@ -504,6 +527,7 @@ apiRouter.post('/v1/chat/completions', validateToken, async (req, res) => {
         ...(result.screenshotUrl && { screenshot_url: result.screenshotUrl }),
         ...(result.metrics && { metrics: result.metrics }),
       });
+      trySaveRecipe(result);
     }
   } catch (error) {
     apiLogger.error({ err: error, completionId }, 'Chat completion failed');
