@@ -18,6 +18,7 @@ import { runComputerUseAgent } from '../services/computer-use/interface.js';
 import type {
   ServerEvent,
   PersistentMessageContentBlock,
+  AgentMetrics,
 } from '@gacua/shared';
 
 const apiLogger = logger.child({ module: 'openai-compat' });
@@ -111,6 +112,8 @@ function formatAction(name: string, args: Record<string, unknown>): string {
       return `wait ${args['duration'] || ''}ms`;
     case 'computer_drag_and_drop':
       return `drag and drop`;
+    case 'computer_done':
+      return `computer_done(${JSON.stringify(args)})`;
     default:
       return `${name}(${JSON.stringify(args)})`;
   }
@@ -124,6 +127,7 @@ interface AgentResult {
   text: string;
   finishReason: 'stop';
   screenshotUrl: string | null;
+  metrics: AgentMetrics | null;
 }
 
 async function collectAgentResponse(
@@ -136,6 +140,7 @@ async function collectAgentResponse(
     const textChunks: string[] = [];
     const actions: string[] = [];
     let lastScreenshotUrl: string | null = null;
+    let agentMetrics: AgentMetrics | null = null;
     let resolved = false;
 
     const emitEvent = (event: ServerEvent) => {
@@ -176,6 +181,11 @@ async function collectAgentResponse(
             break;
           }
 
+          case 'agent_metrics': {
+            agentMetrics = event.payload;
+            break;
+          }
+
           case 'session_status': {
             const { status, message } = event.payload;
             if (status === 'stagnant' || status === 'error') {
@@ -199,7 +209,7 @@ async function collectAgentResponse(
                 onStreamChunk?.(finalText);
               }
 
-              resolve({ text: finalText, finishReason: 'stop', screenshotUrl: lastScreenshotUrl });
+              resolve({ text: finalText, finishReason: 'stop', screenshotUrl: lastScreenshotUrl, metrics: agentMetrics });
             }
             break;
           }
@@ -224,7 +234,7 @@ async function collectAgentResponse(
             }
             onStreamChunk?.(finalText);
           }
-          resolve({ text: finalText, finishReason: 'stop', screenshotUrl: lastScreenshotUrl });
+          resolve({ text: finalText, finishReason: 'stop', screenshotUrl: lastScreenshotUrl, metrics: agentMetrics });
         }
       })
       .catch((err) => {
@@ -457,6 +467,7 @@ apiRouter.post('/v1/chat/completions', validateToken, async (req, res) => {
         ],
         session_id: sessionId,
         ...(streamResult.screenshotUrl && { screenshot_url: streamResult.screenshotUrl }),
+        ...(streamResult.metrics && { metrics: streamResult.metrics }),
       };
       res.write(`data: ${JSON.stringify(finalChunk)}\n\n`);
       res.write('data: [DONE]\n\n');
@@ -491,6 +502,7 @@ apiRouter.post('/v1/chat/completions', validateToken, async (req, res) => {
         },
         session_id: sessionId,
         ...(result.screenshotUrl && { screenshot_url: result.screenshotUrl }),
+        ...(result.metrics && { metrics: result.metrics }),
       });
     }
   } catch (error) {

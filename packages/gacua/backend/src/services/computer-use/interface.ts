@@ -23,6 +23,7 @@ import type {
   FunctionResponse,
   ToolReviewRequest,
   ToolReviewResponse,
+  AgentMetrics,
 } from '@gacua/shared';
 
 const agentInterfaceLogger = logger.child({ module: 'agent-interface' });
@@ -334,6 +335,14 @@ export async function runComputerUseAgent(
   const historyMessages = await getHistoryMessages();
 
   try {
+    const emitMetrics = (metrics: AgentMetrics) => {
+      emitEvent?.({
+        type: 'agent_metrics',
+        sessionId,
+        payload: metrics,
+      });
+    };
+
     await runAgent(
       config,
       historyMessages,
@@ -344,6 +353,7 @@ export async function runComputerUseAgent(
       saveImage,
       persistMessage,
       agentLogger,
+      emitMetrics,
     );
   } catch (error) {
     agentInterfaceLogger.error({ error }, 'Internal error while running agent');

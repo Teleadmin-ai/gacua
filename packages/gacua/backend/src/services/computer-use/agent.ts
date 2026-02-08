@@ -22,6 +22,8 @@ import type {
   FunctionCall as StrictFunctionCall,
   StreamMessage,
   ToolReviewResponse,
+  TurnMetrics,
+  AgentMetrics,
 } from '@gacua/shared';
 import { takeScreenshot, cropScreenshot, imageToPart } from './screen.js';
 import {
@@ -232,6 +234,7 @@ export async function runAgent(
   saveImage: (imageBuffer: Buffer, nameSuffix: string) => Promise<string>,
   persistMessage: (message: AgentPersistMessage) => Promise<void>,
   logger: pino.Logger,
+  emitMetrics?: (metrics: AgentMetrics) => void,
 ): Promise<void> {
   logger.info(
     {
@@ -416,6 +419,8 @@ export async function runAgent(
   }
 
   const contextManager = new ContextManager(historyMessages);
+  const agentStart = Date.now();
+  const turnMetricsList: TurnMetrics[] = [];
   let turnCount = 0;
   try {
     while (true) {
@@ -541,9 +546,10 @@ export async function runAgent(
         }
       }
 
+      const planningMs = Date.now() - planStart;
       turnLogger.info({
         phase: 'planning',
-        durationMs: Date.now() - planStart,
+        durationMs: planningMs,
         functionCallCount: functionCalls.length,
         functionCallNames: functionCalls.map((fc) => fc.name),
       }, 'Planning completed');
@@ -553,7 +559,16 @@ export async function runAgent(
         const doneFc = functionCalls.find((fc) => fc.name === 'computer_done');
         if (doneFc) {
           const summary = (doneFc.args as { summary?: string })?.summary || 'Task completed';
-          turnLogger.info({ summary, turnDurationMs: Date.now() - turnStart }, 'Model signaled task completion via computer_done');
+          const totalMs = Date.now() - turnStart;
+          turnLogger.info({ summary, turnDurationMs: totalMs }, 'Model signaled task completion via computer_done');
+          turnMetricsList.push({
+            turn: turnCount,
+            screenshotMs: Date.now() - turnStart - planningMs, // approximate
+            planningMs,
+            executionMs: 0,
+            totalMs,
+            actions: ['computer_done'],
+          });
           setSessionStatus('stagnant', summary);
           break;
         }
@@ -718,11 +733,25 @@ export async function runAgent(
           toolResponseParts.push(...delayedToolResponseParts);
         }
 
+        const executionMs = Date.now() - execStart;
+        const totalMs = Date.now() - turnStart;
         turnLogger.info({
           phase: 'execution',
-          durationMs: Date.now() - execStart,
-          turnDurationMs: Date.now() - turnStart,
+          durationMs: executionMs,
+          turnDurationMs: totalMs,
         }, 'Tool execution completed');
+
+        const turnActions = functionCalls
+          .filter((fc) => fc.name !== 'computer_done')
+          .map((fc) => `${fc.name}(${JSON.stringify(fc.args)})`);
+        turnMetricsList.push({
+          turn: turnCount,
+          screenshotMs: planStart - turnStart,
+          planningMs,
+          executionMs,
+          totalMs,
+          actions: turnActions,
+        });
 
         if (pending) {
           turnLogger.info('Session paused for tool review');
@@ -732,8 +761,17 @@ export async function runAgent(
 
         currentParts = toolResponseParts;
       } else {
+        const totalMs = Date.now() - turnStart;
         const message = 'No more tool calls from model.';
-        turnLogger.info({ turnDurationMs: Date.now() - turnStart }, message);
+        turnLogger.info({ turnDurationMs: totalMs }, message);
+        turnMetricsList.push({
+          turn: turnCount,
+          screenshotMs: planStart - turnStart,
+          planningMs,
+          executionMs: 0,
+          totalMs,
+          actions: [],
+        });
         setSessionStatus('stagnant', message);
         break;
       }
@@ -743,6 +781,11 @@ export async function runAgent(
     logger.error({ turnCount, error, message }, 'Agent execution failed');
     setSessionStatus('error', message);
   } finally {
-    logger.info({ turnCount }, 'Agent run completed');
+    const agentMetrics: AgentMetrics = {
+      turns: turnMetricsList,
+      totalMs: Date.now() - agentStart,
+    };
+    logger.info({ turnCount, totalMs: agentMetrics.totalMs }, 'Agent run completed');
+    emitMetrics?.(agentMetrics);
   }
 }

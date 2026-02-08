@@ -170,7 +170,27 @@ export interface SessionStatusEvent
   sessionId: string;
 }
 
+export interface TurnMetrics {
+  turn: number;
+  screenshotMs: number;
+  planningMs: number;
+  executionMs: number;
+  totalMs: number;
+  actions: string[];
+}
+
+export interface AgentMetrics {
+  turns: TurnMetrics[];
+  totalMs: number;
+}
+
+export interface AgentMetricsEvent extends Event<AgentMetrics> {
+  type: 'agent_metrics';
+  sessionId: string;
+}
+
 export type ServerEvent =
   | PersistentMessageEvent
   | StreamMessageEvent
-  | SessionStatusEvent;
+  | SessionStatusEvent
+  | AgentMetricsEvent;
