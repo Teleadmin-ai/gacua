@@ -271,6 +271,35 @@ Gemini 3 exige que les `thoughtSignature` soient preserves dans l'historique des
 - Filtre : seuls `_screenshot.png` (pas les crops `_vc0`, `_vc1`, `_vc2`, ni `_annotated`)
 - Permet a un orchestrateur externe de voir l'ecran entre chaque etape
 
+### 10. Fix Flash grounding — tool descriptions renforcees
+Flash 3 envoyait parfois `image_id` sans `element_description` (ou inversement), ce qui
+declenchait l'erreur "When image_id is provided, element_description must be provided".
+Ce n'etait PAS un bug du code mais un comportement du modele Flash.
+- **Fichier** : `packages/gacua/backend/src/services/computer-use/tool-computer/type.ts`
+- **Fichier** : `packages/gacua/backend/src/services/computer-use/tool-computer/scroll.ts`
+- Ajout de "IMPORTANT: if you provide image_id, you MUST also provide element_description"
+  dans les descriptions des parametres `image_id` et `element_description`
+- **Impact majeur** : avant ce fix, Flash echouait a la 2eme action d'une sequence (grounding error),
+  donnant l'impression qu'il ne faisait qu'une action. Apres le fix, Flash enchaine les actions
+  de facon autonome dans la boucle agent.
+
+### 11. MCP timeout 30s (fail fast sur deconnexion SSE)
+- **Fichier** : `packages/gacua/backend/src/services/computer-use/interface.ts`
+- Ajout de `timeout: 30_000` dans la config du serveur MCP `.computer`
+- Le timeout par defaut de `mcp-client.ts` est 10 minutes (`MCP_DEFAULT_TIMEOUT_MSEC = 10 * 60 * 1000`)
+- Quand la connexion SSE tombe en cours de run, le prochain `callTool` attendait 10 min pour rien
+- Avec 30s : fail rapide, le prochain appel API cree une nouvelle connexion MCP
+- Note : pas de reconnexion MCP au sein d'un `runAgent()`. C'est le prochain `runComputerUseAgent()`
+  qui cree un nouveau Config → nouvelle connexion MCP.
+
+### 12. Crop count dans la description screenshot
+- **Fichier** : `packages/gacua/backend/src/services/computer-use/agent.ts`
+- Flash demandait parfois `image_id: 3` alors que seuls 3 crops existent (indices 0, 1, 2)
+- Erreur : "Image ID exceeds the number of cropped screenshots: 3 >= 3"
+- Fix : ajout du nombre de crops dans le texte envoye a Gemini :
+  `"The screen is split into 3 cropped images with valid image_id values from 0 to 2"`
+- Flash sait maintenant combien de crops il y a et quels indices sont valides
+
 ## Commandes
 
 ```bash
@@ -330,12 +359,13 @@ GACUA reutilise la config de Gemini CLI :
 
 ### Principe fondamental
 
-L'agent GACUA fait **UNE SEULE action par tour** (screenshot → planning → grounding → execute).
-Pour des taches complexes (ex: envoyer un email Gmail), il faut **decomposer en etapes atomiques**
-et les envoyer sequentiellement dans la meme session via l'API.
+L'agent GACUA a une boucle `while(true)` : apres chaque action, il reprend un screenshot,
+le renvoie a Gemini, et Gemini decide s'il veut agir encore ou s'arreter (0 function calls → stop).
 
-**IMPORTANT** : ne PAS envoyer une instruction complexe en un seul message.
-Gemini essaiera de tout faire d'un coup et echouera (surtout Flash).
+**Flash peut enchainer plusieurs actions de facon autonome** pour une instruction complete.
+Par exemple "Ouvre Notepad, tape du texte, et sauvegarde" → Flash fait 4+ tours tout seul.
+Mais pour des workflows complexes (ex: envoyer un email Gmail), il est plus fiable de
+**decomposer en etapes atomiques** envoyees sequentiellement via l'API.
 
 ### Exemple : envoyer un email Gmail
 
@@ -375,8 +405,9 @@ curl -s -X POST "$URL/v1/chat/completions" ...
 ### Architecture orchestrateur / executeur
 
 L'intelligence est dans **l'orchestrateur** (LLM externe comme Claude), pas dans Gemini.
-Gemini est un executeur aveugle — il voit l'ecran et clique ou tape la ou on lui dit.
-L'orchestrateur est le cerveau qui planifie, observe et s'adapte.
+Gemini est un executeur semi-autonome — il voit l'ecran, planifie et execute les actions.
+Pour une instruction simple et complete, il peut enchainer plusieurs actions seul.
+L'orchestrateur est le cerveau qui planifie les grandes etapes, observe et s'adapte.
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -398,8 +429,10 @@ L'orchestrateur est le cerveau qui planifie, observe et s'adapte.
 ┌─────────────────────────────────────────────────────┐
 │              GACUA (Gemini executeur)                 │
 │                                                      │
-│  - Recoit UNE instruction simple                     │
-│  - Screenshot → Planning → Grounding → Execute       │
+│  - Recoit une instruction                            │
+│  - Boucle: Screenshot → Planning → Grounding → Exec  │
+│  - Peut enchainer plusieurs actions par tour          │
+│  - S'arrete quand Gemini decide (0 function calls)   │
 │  - Retourne : texte + screenshot_url                 │
 │  - Ne memorise rien entre les sessions               │
 │                                                      │
@@ -423,7 +456,7 @@ Principes :
   Le texte de GACUA est un complement, mais la verite c'est le screenshot.
 - **Adapter dynamiquement** : si l'ecran n'est pas dans l'etat attendu, ajuster le prompt suivant
 - **Sauvegarder les recettes qui marchent** pour les reutiliser et les raffiner
-- **Ne pas essayer de tout faire en un prompt** : decomposer, toujours decomposer
+- **Decomposer les workflows longs** : Flash gere les instructions completes, mais pour 5+ etapes, decomposer reste plus fiable
 
 Exemple de recette "Envoyer un email Gmail" :
 ```
@@ -471,11 +504,13 @@ mais l'orchestrateur ne doit jamais se fier uniquement au texte pour decider.
 
 ### Conseils techniques
 
-- **Une action = un message** : click, type, scroll, etc.
-- **Toujours verifier le screenshot** : apres CHAQUE action, sans exception
+- **Instructions completes** : Flash peut gerer des instructions multi-etapes ("ouvre Notepad, tape du texte, sauvegarde")
+  mais pour des workflows longs, decomposer reste plus fiable
+- **Toujours verifier le screenshot** : apres CHAQUE message envoye, sans exception
 - **Attendre la reponse** : ne jamais envoyer le message suivant avant d'avoir la reponse
-- **Flash suffit** : pour des etapes simples et atomiques, Flash est aussi fiable que Pro
-- **~30s par etape** : 2 appels API Gemini (planning + grounding) + execution
+- **Flash suffit** : pour la plupart des taches, Flash est fiable depuis les fixes des tool descriptions
+- **~30-60s par message** : Flash enchaine potentiellement plusieurs tours (2 appels API par tour)
+- **Timeout MCP 30s** : si la connexion SSE tombe, le run echoue en 30s max (pas 10 min)
 
 ### Screenshots — Stockage et acces
 
@@ -533,6 +568,22 @@ ouvre une nouvelle connexion SSE au serveur MCP (port 10001).
 pour reutiliser la connexion MCP a completement casse le controle du PC.
 Chaque appel DOIT creer un nouveau Config. La solution est de fermer apres, pas de reutiliser.
 
+### Flash 3 : grounding error image_id/element_description (CORRIGE)
+Flash envoyait `image_id` sans `element_description`, causant l'erreur de validation.
+Ce n'etait PAS un bug du code mais un comportement du modele.
+**Fix** : descriptions renforcees dans les tool declarations (type.ts, scroll.ts) — voir modif 10.
+**Consequence** : avant le fix, Flash semblait ne faire qu'une action (echouait a la 2eme).
+Apres le fix, Flash enchaine les actions de facon autonome.
+
+### Flash 3 : image_id hors limites (CORRIGE)
+Flash demandait `image_id: 3` alors que les indices valides sont 0-2.
+**Fix** : le nombre de crops et la plage d'indices est communique dans la description du screenshot — voir modif 12.
+
+### MCP timeout de 10 minutes (CORRIGE)
+Le timeout par defaut du MCP client etait 10 min. Quand la connexion SSE tombait,
+le run attendait 10 min pour rien avant de fail.
+**Fix** : timeout de 30s pour le serveur MCP `.computer` — voir modif 11.
+
 ### Flash 3 : texte parasite dans les reponses
 Gemini 3 Flash emet parfois des chiffres parasites ("0", "2") comme text parts a cote de ses
 function calls et thoughts. Ces chiffres apparaissent dans l'interface web. C'est un comportement
@@ -541,8 +592,10 @@ du modele Flash, pas un bug du code. Pro ne le fait pas.
 ## Notes
 
 - Le selecteur de modele est **par session** : changer de modele necessite une nouvelle session
-- Flash est plus rapide mais moins precis pour le grounding (oublie parfois `element_description`)
+- Flash est plus rapide et fiable pour le grounding depuis les fixes des tool descriptions (modif 10, 12)
 - Si erreur "EADDRINUSE" : `netstat -ano | findstr :10001` puis `taskkill /PID <pid> /F` (dans cmd.exe)
 - Les screenshots sont croppes en carres avec 50% de chevauchement pour couvrir tout l'ecran
 - GPU local possible pour le grounding (modele vision leger type Qwen-VL) pour reduire la latence
 - Resolution ecran actuelle : 3072x1728 (screenshots MCP captures a cette resolution)
+- **systemInstruction incompatible avec Flash** : ajouter un `systemInstruction` a l'appel planning
+  (avec thinking + function calling) fait hang la requete indefiniment. Les tool descriptions suffisent.

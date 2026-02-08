@@ -51,6 +51,7 @@ export async function prepareComputerUseConfig(
     mcpServers: {
       '.computer': {
         httpUrl: process.env['GACUA_MCP_COMPUTER_URL'],
+        timeout: 30_000, // 30s — mouse/keyboard ops are fast, fail quickly on SSE disconnect
       },
     },
     approvalMode: ApprovalMode.YOLO,

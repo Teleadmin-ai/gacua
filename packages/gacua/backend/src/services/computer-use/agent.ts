@@ -432,7 +432,17 @@ export async function runAgent(
           )
         ).llmContent,
       );
-      const screenshotDescription = `Screenshot at ${new Date().toLocaleString()}:`;
+      turnLogger.debug('Cropping screenshot');
+      const croppedScreenshots = await cropScreenshot(screenshot);
+      const croppedScreenshotsData = await Promise.all(
+        croppedScreenshots.map(
+          async ({ image, nameSuffix }) => ({
+            imageFileName: await saveImage(image.buffer, nameSuffix),
+            imagePart: imageToPart(image),
+          }),
+        ),
+      );
+      const screenshotDescription = `Screenshot at ${new Date().toLocaleString()}. The screen is split into ${croppedScreenshotsData.length} cropped images with valid image_id values from 0 to ${croppedScreenshotsData.length - 1}:`;
       await persistMessage({
         role: 'workflow',
         parts: [
@@ -441,16 +451,6 @@ export async function runAgent(
         ],
         forDisplay: true,
       });
-
-      turnLogger.debug('Cropping screenshot');
-      const croppedScreenshotsData = await Promise.all(
-        (await cropScreenshot(screenshot)).map(
-          async ({ image, nameSuffix }) => ({
-            imageFileName: await saveImage(image.buffer, nameSuffix),
-            imagePart: imageToPart(image),
-          }),
-        ),
-      );
       await persistMessage({
         role: 'workflow',
         parts: [

@@ -32,13 +32,13 @@ export class ComputerType extends BaseGroundableTool<ComputerTypeArgs> {
       properties: {
         image_id: {
           description:
-            'The index of the image in the cropped screenshots that contains the element to enter text in. This is optional if the input box is already focused.',
+            'The index of the image in the cropped screenshots that contains the element to enter text in. This is optional if the input box is already focused. IMPORTANT: if you provide image_id, you MUST also provide element_description.',
           type: 'number',
           minimum: 0,
         },
         element_description: {
           description:
-            'A precise and unambiguous description of the target UI element to enter text in. Include its text or icon, and if multiple similar elements exist, add positional details.',
+            'A precise and unambiguous description of the target UI element to enter text in. Include its text or icon, and if multiple similar elements exist, add positional details. IMPORTANT: if you provide element_description, you MUST also provide image_id. Both must be provided together or both omitted.',
           type: 'string',
         },
         text: {
