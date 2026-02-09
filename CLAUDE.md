@@ -802,6 +802,8 @@ La liste ci-dessous est **mise a jour automatiquement par l'API** quand une tach
 | `recipe_test-describe-v2_8s.md` | test-describe-v2 | 8s | qwen3-vl:8b-q8-32k | test-describe-v2 | 2026-02-09 |
 | `recipe_api-1770642947107_4s.md` | api-1770642947107 | 4s | qwen3-vl:8b-q8-32k | api-1770642947107 | 2026-02-09 |
 | `recipe_test-remind-qwen_8s.md` | test-remind-qwen | 8s | qwen3-vl:8b-q8-32k | test-remind-qwen | 2026-02-09 |
+| `recipe_libreoffice-writer-save-testqween_2m22s.md` | libreoffice-writer-save-testqween | 2m22s | qwen3-vl:8b-q8-32k | libreoffice-writer-save-testqween | 2026-02-09 |
+| `recipe_libreoffice-save-testqween-v2_1m15s.md` | libreoffice-save-testqween-v2 | 1m15s | qwen3-vl:8b-q8-32k | libreoffice-save-testqween-v2 | 2026-02-09 |
 <!-- RECIPES_END -->
 
 #### Principes des recettes
@@ -952,6 +954,19 @@ Lecture des metrics : le bottleneck est `planningMs` (6-13s = temps de reflexion
 - **Grounding raw Part[]** : l'appel grounding passe `contents: [imagePart, textPart]` (raw Parts,
   pas Content[]). L'adapter OpenAI detecte et wrappe automatiquement. Si un nouvel adapter est cree,
   il doit gerer ce cas.
+- **Prompts orchestrateur trop vagues = echec** : les modeles 8B (Qwen3-VL) ne devinent PAS
+  ou cliquer a partir d'instructions abstraites. TOUJOURS decrire les elements UI avec leur
+  **position spatiale precise** dans la fenetre. Exemples :
+  - MAL : "Click on Documents" → le modele ne sait pas OU dans l'ecran
+  - BIEN : "Click on Documents in the quick access panel on the left side of the file explorer"
+  - MAL : "Navigate to the folder" → trop vague
+  - BIEN : "In the address bar at the top of the Save As dialog, clear the current path and type C:\Users\teleadmin\Documents\testqween then press Enter"
+  - MAL : "Save the file" → ou est le bouton ?
+  - BIEN : "Click the Save button at the bottom-right of the Save As dialog"
+  Chaque instruction doit decrire : QUOI (element) + OU (position dans la fenetre) + COMMENT (action).
+- **Bash variables dans curl headers (Git Bash Windows)** : les variables bash ($TOKEN) sont
+  souvent vides dans les headers `-H "Authorization: Bearer $TOKEN"`. Utiliser soit le token
+  en dur, soit `python3` avec `urllib.request` pour les appels API fiables.
 
 ## Notes
 
