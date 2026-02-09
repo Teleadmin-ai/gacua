@@ -18,6 +18,13 @@ HOST="192.168.11.13"
 PORT_API=3000
 PORT_MCP=10001
 
+# Load .env if present (OPENAI_COMPAT_* etc.)
+if [[ -f "$GACUA_DIR/.env" ]]; then
+  set -a
+  source "$GACUA_DIR/.env"
+  set +a
+fi
+
 # screenshot-desktop uses a bat+exe in Temp\screenCapture.
 # The bat calls %~n0.exe (relative), so the dir must be in PATH.
 SCREENCAP_DIR="$APPDATA/../Local/Temp/screenCapture"

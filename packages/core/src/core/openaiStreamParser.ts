@@ -182,7 +182,22 @@ export async function* parseOpenAIStream(
               toolCalls.set(tc.index, acc);
             }
             if (tc.id) acc.id = tc.id;
-            if (tc.function?.name) acc.name += tc.function.name;
+            if (tc.function?.name) {
+              if (acc.name && acc.name !== tc.function.name) {
+                // Different tool name on same index — model sent multiple tool
+                // calls reusing the same streaming index (Qwen3-VL quirk).
+                // Create a separate entry with a synthetic index.
+                const syntheticIndex = tc.index + 1000 + toolCalls.size;
+                acc = {
+                  id: tc.id ?? `tool-${syntheticIndex}-${Date.now()}`,
+                  name: tc.function.name,
+                  argumentChunks: [],
+                };
+                toolCalls.set(syntheticIndex, acc);
+              } else {
+                acc.name = tc.function.name;
+              }
+            }
             if (tc.function?.arguments) acc.argumentChunks.push(tc.function.arguments);
           }
         }
