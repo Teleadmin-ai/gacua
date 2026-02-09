@@ -39,8 +39,9 @@ import {
 import pino from 'pino';
 
 /** Number of recent turns whose screenshot images are kept in context.
- *  Older turns' images are stripped and replaced with text placeholders. */
-const KEEP_RECENT_IMAGES = 3;
+ *  Older turns' images are stripped and replaced with text placeholders.
+ *  With native context (256K Qwen3-VL, 128K UI-TARS), we can keep many more. */
+const KEEP_RECENT_IMAGES = 20;
 
 export type AgentInput =
   | string

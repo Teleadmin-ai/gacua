@@ -403,7 +403,7 @@ Premier clic reussi (ouverture menu Start) en 7.5s (vs 44s Gemini Flash = **6x p
 # === Ollama local (TESTE — RTX 4090) ===
 OPENAI_COMPAT_BASE_URL=http://localhost:11434/v1
 OPENAI_COMPAT_API_KEY=ollama
-OPENAI_COMPAT_MODEL=qwen3-vl:8b-q8-32k    # Variante 32K context (voir note Ollama)
+OPENAI_COMPAT_MODEL=qwen3-vl:8b-q8-256k   # Contexte natif 256K (voir note Ollama)
 
 # === HuggingFace Inference API ===
 OPENAI_COMPAT_BASE_URL=https://router.huggingface.co/v1
@@ -423,18 +423,26 @@ OPENAI_COMPAT_MODEL=qwen3-vl-8b
 
 #### Note Ollama : context length
 
-Ollama default `num_ctx=4096` — **beaucoup trop petit** pour GACUA (3 crops base64 + tools
-+ system prompt). Le modele supporte 262K. Creer une variante avec context suffisant :
+Ollama default `num_ctx=4096` — **beaucoup trop petit** pour GACUA. Toujours creer des
+variantes avec le **contexte natif complet** du modele :
+
+| Modele | Contexte natif | Variante Ollama |
+|--------|---------------|-----------------|
+| Qwen3-VL 8B | **262144 (256K)** | `qwen3-vl:8b-q8-256k` |
+| UI-TARS 1.5 7B | **128000 (128K)** | `ui-tars-1.5-7b-128k` |
 
 ```bash
-# Creer un modele derive avec 32K context (une seule fois)
+# Qwen3-VL — contexte natif 256K
 curl -s http://localhost:11434/api/create -d \
-  '{"name":"qwen3-vl:8b-q8-32k","from":"qwen3-vl:8b-instruct-q8_0","parameters":{"num_ctx":32768}}'
+  '{"name":"qwen3-vl:8b-q8-256k","from":"qwen3-vl:8b-instruct-q8_0","parameters":{"num_ctx":262144}}'
 
-# Utiliser ce nom dans OPENAI_COMPAT_MODEL
+# UI-TARS 1.5 — contexte natif 128K
+curl -s http://localhost:11434/api/create -d \
+  '{"name":"ui-tars-1.5-7b-128k","from":"hf.co/Mungert/UI-TARS-1.5-7B-GGUF:Q8_0","parameters":{"num_ctx":128000}}'
 ```
 
-Sans ca, le modele produit des reponses incoherentes ou tronquees (le context deborde silencieusement).
+Avec le vrai contexte, le modele a tout l'historique en tete (screenshots inclus) et peut
+raisonner sur l'ensemble de la session. Sans ca → reponses incoherentes ou tronquees.
 
 #### Traductions effectuees par l'adapter
 
@@ -461,7 +469,7 @@ Sans ca, le modele produit des reponses incoherentes ou tronquees (le context de
 | `gacua-qwen3-vl-8b`   | Qwen/Qwen3-VL-8B-Instruct     |
 | `gacua-qwen3-vl-32b`  | Qwen/Qwen3-VL-32B-Instruct    |
 
-Les noms natifs sont aussi acceptes directement (ex: `qwen3-vl:8b-q8-32k` pour Ollama).
+Les noms natifs sont aussi acceptes directement (ex: `qwen3-vl:8b-q8-256k` pour Ollama).
 
 #### Benchmarks (Qwen3-VL 8B Q8 sur RTX 4090 via Ollama)
 
@@ -530,10 +538,10 @@ UI-TARS :                      Screenshot → Planning (texte) → Parse → Exe
 
 **Configuration** :
 ```bash
-# UI-TARS-1.5-7B via Ollama
+# UI-TARS-1.5-7B via Ollama (contexte natif 128K)
 OPENAI_COMPAT_BASE_URL=http://localhost:11434/v1
 OPENAI_COMPAT_API_KEY=ollama
-OPENAI_COMPAT_MODEL=ui-tars-1.5-7b
+OPENAI_COMPAT_MODEL=ui-tars-1.5-7b-128k
 
 # Ou forcer le mode UI-TARS sur n'importe quel modele
 UITARS_MODE=true
@@ -1024,7 +1032,8 @@ Lecture des metrics : le bottleneck est `planningMs` (6-13s = temps de reflexion
 - **systemInstruction incompatible avec Flash** : ajouter un `systemInstruction` a l'appel planning
   (avec thinking + function calling) fait hang la requete indefiniment. Les tool descriptions suffisent.
 - **Ollama num_ctx par defaut = 4096** : beaucoup trop petit pour GACUA. Le modele deborde
-  silencieusement et produit du garbage. Toujours creer une variante avec `num_ctx >= 32768`.
+  silencieusement et produit du garbage. Toujours creer une variante avec le **contexte natif
+  complet** du modele : 262144 pour Qwen3-VL, 128000 pour UI-TARS 1.5.
 - **Grounding coordinates : Gemini ≠ standard** : Gemini retourne `[y,x,y,x]`, les modeles
   standard retournent `[x,y,x,y]`. Le swap est gere dans `agent.ts` (section 19).
   Si un nouveau provider est ajoute, verifier quelle convention il utilise.
