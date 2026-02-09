@@ -470,6 +470,7 @@ apiRouter.post('/v1/chat/completions', validateToken, async (req, res) => {
         sessionId: sessionId!,
         stepNumber: currentStep,
         hasDone,
+        model: geminiModel,
       });
     };
 

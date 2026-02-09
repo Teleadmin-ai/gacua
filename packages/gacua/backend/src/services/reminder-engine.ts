@@ -16,7 +16,7 @@ export type ReminderContext =
   | { action: 'session_create'; sessionName: string }
   | { action: 'session_list'; sessionCount: number }
   | { action: 'session_delete'; sessionId: string }
-  | { action: 'chat_completion'; sessionId: string; stepNumber: number; hasDone: boolean }
+  | { action: 'chat_completion'; sessionId: string; stepNumber: number; hasDone: boolean; model?: string }
   | { action: 'messages_list'; sessionId: string };
 
 // ---------------------------------------------------------------------------
@@ -39,21 +39,41 @@ const RULES: ReminderRule[] = [
     message: 'Le nom de session = titre de la recette. Choisis un nom descriptif.',
   },
 
-  // --- First chat completion in a session (step 1) ---
+  // --- First chat completion in a session (step 1) — model-specific observe prompt ---
   {
     condition: (ctx) =>
-      ctx.action === 'chat_completion' && ctx.stepNumber === 1,
-    message: 'Phase 1 OBSERVER : as-tu verifie ce qu\'il y a a l\'ecran AVANT cette action ? '
+      ctx.action === 'chat_completion' && ctx.stepNumber === 1
+      && ctx.model !== undefined && !ctx.model.startsWith('gemini'),
+    message: 'Phase 1 OBSERVER (modele local) : as-tu verifie ce qu\'il y a a l\'ecran AVANT cette action ? '
+      + 'Si non, ton PREMIER message DOIT etre : '
+      + '"Before doing anything, briefly describe what is currently visible on the screen in 3-5 sentences. '
+      + 'Mention open windows, active applications, and the state of the taskbar. '
+      + 'Then call computer_done with your description as the summary." '
+      + '— Le modele decrira l\'ecran en texte. Tu peux lire la description dans le champ content '
+      + 'de la reponse SANS fetcher le screenshot. Pipeline 100% local, zero vision cloud.',
+  },
+  {
+    condition: (ctx) =>
+      ctx.action === 'chat_completion' && ctx.stepNumber === 1
+      && (ctx.model === undefined || ctx.model.startsWith('gemini')),
+    message: 'Phase 1 OBSERVER (Gemini) : as-tu verifie ce qu\'il y a a l\'ecran AVANT cette action ? '
       + 'Si non, ton PREMIER message dans une session DOIT etre EXACTEMENT : '
       + '"Bonjour, je suis ton orchestrateur et je te donnerai mon instruction au prochain message" '
       + '— NE PAS raccourcir, NE PAS reformuler. Sans la partie "je te donnerai mon instruction au prochain message", '
       + 'Gemini va agir au lieu d\'attendre.',
   },
 
-  // --- Any chat completion ---
+  // --- Any chat completion — verification prompt depends on model ---
   {
-    condition: (ctx) => ctx.action === 'chat_completion',
+    condition: (ctx) => ctx.action === 'chat_completion'
+      && (ctx.model === undefined || ctx.model.startsWith('gemini')),
     message: 'STOP — AVANT d\'envoyer le prochain message, tu DOIS : 1) GET screenshot_url avec le token, 2) LIRE l\'image, 3) VERIFIER que l\'action a reussi visuellement. Ne te fie JAMAIS au texte seul. Si tu ne verifies pas, tu vas enchainer des erreurs en cascade.',
+  },
+  {
+    condition: (ctx) => ctx.action === 'chat_completion'
+      && ctx.model !== undefined && !ctx.model.startsWith('gemini'),
+    message: 'VERIFICATION (modele local) : la description textuelle du computer_done suffit pour les cas simples. '
+      + 'Fetch le screenshot SEULEMENT si la description est ambigue ou si l\'action semble avoir echoue.',
   },
   {
     condition: (ctx) => ctx.action === 'chat_completion',

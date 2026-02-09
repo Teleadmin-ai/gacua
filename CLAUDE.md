@@ -647,23 +647,45 @@ Ce n'est PAS une liste de conseils, c'est la procedure de travail.
 
 **Regle** : avant toute action, se demander **"Est-ce que je sais ce qu'il y a a l'ecran ?"**
 - Si OUI (screenshot deja vu plus tot dans cette conversation) → passer a Phase 2
-- Si NON (premiere solicitation, ou doute) → **message neutre obligatoire**
+- Si NON (premiere solicitation, ou doute) → **message d'observation obligatoire**
 
-Le message neutre declenche un screenshot sans action de la part de Gemini :
+Le message d'observation depend du modele utilise :
+
+**Modele local (Qwen3-VL, etc.) — description textuelle :**
 
 ```
-1. Envoyer un message neutre a GACUA :
-   → "Bonjour, je suis ton orchestrateur."
+1. Envoyer a GACUA :
+   → "Before doing anything, briefly describe what is currently visible on the
+      screen in 3-5 sentences. Mention open windows, active applications, and
+      the state of the taskbar. Then call computer_done with your description
+      as the summary."
+2. Recuperer la reponse → le champ `content` contient la description textuelle
+3. Lire la description : quelles fenetres sont ouvertes ? quel etat ?
+4. PAS BESOIN de fetcher le screenshot — la description suffit (pipeline 100% local)
+5. Adapter le plan en fonction de ce qui est decrit
+```
+
+**Gemini (API cloud) — message neutre :**
+
+```
+1. Envoyer a GACUA :
+   → "Bonjour, je suis ton orchestrateur et je te donnerai mon instruction
+      au prochain message"
    (Gemini prend un screenshot, ne fait rien, et appelle computer_done)
 2. Recuperer la reponse + screenshot_url
 3. Fetcher le screenshot (GET {screenshot_url}?token=T)
-4. Analyser l'image : quelles fenetres sont ouvertes ? quel etat ?
-5. Adapter le plan en fonction de ce qui est DEJA visible a l'ecran
+4. Analyser l'image avec la vision de l'orchestrateur (Claude)
+5. Adapter le plan en fonction de ce qui est visible a l'ecran
 ```
 
 **Pourquoi c'est critique** : sans ca, l'orchestrateur planifie a l'aveugle et fait des
 actions inutiles (ouvrir une app deja ouverte, naviguer vers une page deja affichee).
 L'ecran a pu changer entre deux conversations — ne jamais supposer, toujours verifier.
+
+**Pourquoi deux approches** : les modeles locaux (Qwen3-VL) produisent d'excellentes
+descriptions textuelles de l'ecran (~4s, zero cout). L'orchestrateur n'a pas besoin
+de vision pour lire du texte. Avec Gemini, le modele ne decrit pas spontanement la
+scene — il faut fetcher le screenshot et l'analyser cote orchestrateur (Claude vision).
 
 #### Phase 2 — PLANIFIER la sequence complete
 
@@ -775,6 +797,11 @@ La liste ci-dessous est **mise a jour automatiquement par l'API** quand une tach
 | `recipe_test-qwen-32k_7s.md` | test-qwen-32k | 7s | qwen3-vl:8b-q8-32k | test-qwen-32k | 2026-02-09 |
 | `recipe_test-grounding_7s.md` | test-grounding | 7s | qwen3-vl:8b-q8-32k | test-grounding | 2026-02-09 |
 | `recipe_test-coord-swap_7s.md` | test-coord-swap | 7s | qwen3-vl:8b-q8-32k | test-coord-swap | 2026-02-09 |
+| `recipe_test-calc-qwen_19s.md` | test-calc-qwen | 19s | qwen3-vl:8b-q8-32k | test-calc-qwen | 2026-02-09 |
+| `recipe_test-describe_53s.md` | test-describe | 53s | qwen3-vl:8b-q8-32k | test-describe | 2026-02-09 |
+| `recipe_test-describe-v2_8s.md` | test-describe-v2 | 8s | qwen3-vl:8b-q8-32k | test-describe-v2 | 2026-02-09 |
+| `recipe_api-1770642947107_4s.md` | api-1770642947107 | 4s | qwen3-vl:8b-q8-32k | api-1770642947107 | 2026-02-09 |
+| `recipe_test-remind-qwen_8s.md` | test-remind-qwen | 8s | qwen3-vl:8b-q8-32k | test-remind-qwen | 2026-02-09 |
 <!-- RECIPES_END -->
 
 #### Principes des recettes
