@@ -804,6 +804,32 @@ La liste ci-dessous est **mise a jour automatiquement par l'API** quand une tach
 | `recipe_test-remind-qwen_8s.md` | test-remind-qwen | 8s | qwen3-vl:8b-q8-32k | test-remind-qwen | 2026-02-09 |
 | `recipe_libreoffice-writer-save-testqween_2m22s.md` | libreoffice-writer-save-testqween | 2m22s | qwen3-vl:8b-q8-32k | libreoffice-writer-save-testqween | 2026-02-09 |
 | `recipe_libreoffice-save-testqween-v2_1m15s.md` | libreoffice-save-testqween-v2 | 1m15s | qwen3-vl:8b-q8-32k | libreoffice-save-testqween-v2 | 2026-02-09 |
+| `recipe_api-1770645104098_8s.md` | api-1770645104098 | 8s | qwen3-vl:8b-q8-32k | api-1770645104098 | 2026-02-09 |
+| `recipe_api-1770645129498_9s.md` | api-1770645129498 | 9s | qwen3-vl:8b-q8-32k | api-1770645129498 | 2026-02-09 |
+| `recipe_api-1770645175001_11s.md` | api-1770645175001 | 11s | qwen3-vl:8b-q8-32k | api-1770645175001 | 2026-02-09 |
+| `recipe_api-1770645313719_13s.md` | api-1770645313719 | 13s | qwen3-vl:8b-q8-32k | api-1770645313719 | 2026-02-09 |
+| `recipe_api-1770645362745_11s.md` | api-1770645362745 | 11s | qwen3-vl:8b-q8-32k | api-1770645362745 | 2026-02-09 |
+| `recipe_api-1770645676224_7s.md` | api-1770645676224 | 7s | qwen3-vl:8b-q8-32k | api-1770645676224 | 2026-02-09 |
+| `recipe_api-1770645722020_4s.md` | api-1770645722020 | 4s | qwen3-vl:8b-q8-32k | api-1770645722020 | 2026-02-09 |
+| `recipe_api-1770645764098_7s.md` | api-1770645764098 | 7s | qwen3-vl:8b-q8-32k | api-1770645764098 | 2026-02-09 |
+| `recipe_api-1770646137342_4s.md` | api-1770646137342 | 4s | qwen3-vl:8b-q8-32k | api-1770646137342 | 2026-02-09 |
+| `recipe_api-1770646407534_9s.md` | api-1770646407534 | 9s | qwen3-vl:8b-q8-32k | api-1770646407534 | 2026-02-09 |
+| `recipe_api-1770646157048_78m34s.md` | api-1770646157048 | 78m34s | qwen3-vl:8b-q8-32k | api-1770646157048 | 2026-02-09 |
+| `recipe_api-1770653375853_8s.md` | api-1770653375853 | 8s | qwen3-vl:8b-q8-32k | api-1770653375853 | 2026-02-09 |
+| `recipe_api-1770653401376_11s.md` | api-1770653401376 | 11s | qwen3-vl:8b-q8-32k | api-1770653401376 | 2026-02-09 |
+| `recipe_api-1770653696361_3s.md` | api-1770653696361 | 3s | qwen3-vl:8b-q8-32k | api-1770653696361 | 2026-02-09 |
+| `recipe_api-1770653717976_6s.md` | api-1770653717976 | 6s | qwen3-vl:8b-q8-32k | api-1770653717976 | 2026-02-09 |
+| `recipe_api-1770653867006_7s.md` | api-1770653867006 | 7s | qwen3-vl:8b-q8-32k | api-1770653867006 | 2026-02-09 |
+| `recipe_save-as-testqween-v8_3m55s.md` | save-as-testqween-v8 | 3m55s | qwen3-vl:8b-q8-32k | save-as-testqween-v8 | 2026-02-09 |
+| `recipe_api-1770663670101_22s.md` | api-1770663670101 | 22s | qwen3-vl:8b-q8-32k | api-1770663670101 | 2026-02-09 |
+| `recipe_api-1770663906480_20s.md` | api-1770663906480 | 20s | qwen3-vl:8b-q8-32k | api-1770663906480 | 2026-02-09 |
+| `recipe_api-1770663999683_25s.md` | api-1770663999683 | 25s | qwen3-vl:8b-q8-32k | api-1770663999683 | 2026-02-09 |
+| `recipe_api-1770664054122_20s.md` | api-1770664054122 | 20s | qwen3-vl:8b-q8-32k | api-1770664054122 | 2026-02-09 |
+| `recipe_observe_27s.md` | observe | 27s | qwen3-vl:8b-q8-32k | observe | 2026-02-09 |
+| `recipe_save-test2-oneshot_58s.md` | save-test2-oneshot | 58s | qwen3-vl:8b-q8-32k | save-test2-oneshot | 2026-02-09 |
+| `recipe_observe2_4s.md` | observe2 | 4s | qwen3-vl:8b-q8-32k | observe2 | 2026-02-09 |
+| `recipe_save-test2-v2_47s.md` | save-test2-v2 | 47s | qwen3-vl:8b-q8-32k | save-test2-v2 | 2026-02-09 |
+| `recipe_save-test2-v3_42s.md` | save-test2-v3 | 42s | qwen3-vl:8b-q8-32k | save-test2-v3 | 2026-02-09 |
 <!-- RECIPES_END -->
 
 #### Principes des recettes
