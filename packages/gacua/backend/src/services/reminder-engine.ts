@@ -43,20 +43,31 @@ const RULES: ReminderRule[] = [
   {
     condition: (ctx) =>
       ctx.action === 'chat_completion' && ctx.stepNumber === 1,
-    message: 'Phase 1 OBSERVER : as-tu verifie ce qu\'il y a a l\'ecran ? Si non, envoie un message neutre d\'abord.',
+    message: 'Phase 1 OBSERVER : as-tu verifie ce qu\'il y a a l\'ecran AVANT cette action ? '
+      + 'Si non, ton PREMIER message dans une session DOIT etre EXACTEMENT : '
+      + '"Bonjour, je suis ton orchestrateur et je te donnerai mon instruction au prochain message" '
+      + '— NE PAS raccourcir, NE PAS reformuler. Sans la partie "je te donnerai mon instruction au prochain message", '
+      + 'Gemini va agir au lieu d\'attendre.',
   },
 
   // --- Any chat completion ---
   {
     condition: (ctx) => ctx.action === 'chat_completion',
-    message: 'TOUJOURS fetcher le screenshot_url — c\'est la source de verite, pas le texte.',
+    message: 'STOP — AVANT d\'envoyer le prochain message, tu DOIS : 1) GET screenshot_url avec le token, 2) LIRE l\'image, 3) VERIFIER que l\'action a reussi visuellement. Ne te fie JAMAIS au texte seul. Si tu ne verifies pas, tu vas enchainer des erreurs en cascade.',
+  },
+  {
+    condition: (ctx) => ctx.action === 'chat_completion',
+    message: 'REGLE ABSOLUE : chaque message a Gemini doit contenir 1 ou 2 instructions MAXIMUM. '
+      + 'JAMAIS 3+. Si tu mets trop d\'etapes dans un seul message, Flash va boucler a l\'infini '
+      + '(il refait la sequence en boucle au lieu d\'appeler computer_done). '
+      + 'Decompose TOUJOURS en messages atomiques : 1 message = 1 action simple.',
   },
 
   // --- Task completed (computer_done detected) ---
   {
     condition: (ctx) =>
       ctx.action === 'chat_completion' && ctx.hasDone,
-    message: 'Tache terminee. Verifie le screenshot final et compare les metrics avec les recettes existantes.',
+    message: 'Tache terminee. OBLIGATOIRE : fetch + verifie le screenshot final avant de continuer. Compare les metrics avec les recettes existantes.',
   },
   {
     condition: (ctx) =>

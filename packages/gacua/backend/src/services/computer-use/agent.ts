@@ -144,9 +144,12 @@ The box_2d should be [ymin, xmin, ymax, xmax] normalized to 0-1000.
   }
 
   const boundingBoxData = JSON.parse(output);
+  console.log(`[GROUNDING] element="${elementDescription}" raw_output=${output}`);
+  logger.info({ elementDescription, groundingOutput: output }, 'Grounding model raw output');
   const box2d = Array.isArray(boundingBoxData)
     ? boundingBoxData[0].box_2d
     : boundingBoxData.box_2d;
+  console.log(`[GROUNDING] box_2d=${JSON.stringify(box2d)}`);
 
   if (!Array.isArray(box2d) || box2d.length !== 4) {
     logger.error(
@@ -158,7 +161,11 @@ The box_2d should be [ymin, xmin, ymax, xmax] normalized to 0-1000.
     );
   }
 
-  const [ymin, xmin, ymax, xmax] = box2d.map((coord: unknown) => {
+  // Gemini uses [ymin, xmin, ymax, xmax] convention.
+  // Most other models (Qwen, OpenAI, etc.) use standard CV convention [xmin, ymin, xmax, ymax].
+  // Detect by model name: if not gemini-*, swap x↔y.
+  const isGeminiModel = config.getModel().startsWith('gemini');
+  const coords = box2d.map((coord: unknown) => {
     const intCoord = parseInt(String(coord));
     if (isNaN(intCoord) || intCoord < 0 || intCoord > 1000) {
       logger.error({ elementDescription, coord }, 'Invalid coordinate value');
@@ -166,6 +173,13 @@ The box_2d should be [ymin, xmin, ymax, xmax] normalized to 0-1000.
     }
     return intCoord;
   });
+
+  // Apply coordinate convention: Gemini=[ymin,xmin,ymax,xmax], others=[xmin,ymin,xmax,ymax]
+  const [ymin, xmin, ymax, xmax] = isGeminiModel
+    ? [coords[0], coords[1], coords[2], coords[3]]  // Gemini: already [y,x,y,x]
+    : [coords[1], coords[0], coords[3], coords[2]]; // Others: swap [x,y,x,y] → [y,x,y,x]
+
+  console.log(`[GROUNDING] model=${config.getModel()} isGemini=${isGeminiModel} raw=[${coords}] → [ymin=${ymin}, xmin=${xmin}, ymax=${ymax}, xmax=${xmax}]`);
 
   if (ymin >= ymax || xmin >= xmax) {
     logger.error(

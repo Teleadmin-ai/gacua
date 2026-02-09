@@ -18,6 +18,13 @@ HOST="192.168.11.13"
 PORT_API=3000
 PORT_MCP=10001
 
+# screenshot-desktop uses a bat+exe in Temp\screenCapture.
+# The bat calls %~n0.exe (relative), so the dir must be in PATH.
+SCREENCAP_DIR="$APPDATA/../Local/Temp/screenCapture"
+if [[ -d "$SCREENCAP_DIR" ]]; then
+  export PATH="$PATH:$SCREENCAP_DIR"
+fi
+
 # ── Helpers ──────────────────────────────────────────────────────
 
 load_state() {

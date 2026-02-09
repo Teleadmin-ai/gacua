@@ -23,6 +23,15 @@ const authLogger = logger.child({ module: 'gemini-auth' });
 const USER_SETTINGS_PATH = path.join(homedir(), '.gemini', 'settings.json');
 
 export function getAuthType() {
+  // Auto-detect OpenAI-compatible provider from env vars (takes priority)
+  if (process.env['OPENAI_COMPAT_BASE_URL']) {
+    authLogger.info(
+      { baseUrl: process.env['OPENAI_COMPAT_BASE_URL'] },
+      'Auto-detected OpenAI-compatible provider from OPENAI_COMPAT_BASE_URL',
+    );
+    return AuthType.USE_OPENAI_COMPAT;
+  }
+
   if (fs.existsSync(USER_SETTINGS_PATH)) {
     const userContent = fs.readFileSync(USER_SETTINGS_PATH, 'utf-8');
     const parsedUserSettings = JSON.parse(stripJsonComments(userContent));
@@ -57,6 +66,13 @@ export async function isAuthenticated(
   if (!authType) {
     authLogger.debug('No auth type provided for authentication check');
     return false;
+  }
+
+  // OpenAI-compat doesn't use Google auth — just check env vars
+  if (authType === AuthType.USE_OPENAI_COMPAT) {
+    const hasBaseUrl = !!process.env['OPENAI_COMPAT_BASE_URL'];
+    authLogger.debug({ hasBaseUrl }, 'OpenAI-compat auth check');
+    return hasBaseUrl;
   }
 
   try {

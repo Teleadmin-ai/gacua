@@ -35,6 +35,10 @@ const sessionStepCount = new Map<string, number>();
 const MODEL_MAP: Record<string, string> = {
   'gacua-gemini-3-pro': 'gemini-3-pro-preview',
   'gacua-gemini-3-flash': 'gemini-3-flash-preview',
+  'gacua-qwen3-vl-2b': 'Qwen/Qwen3-VL-2B-Instruct',
+  'gacua-qwen3-vl-4b': 'Qwen/Qwen3-VL-4B-Instruct',
+  'gacua-qwen3-vl-8b': 'Qwen/Qwen3-VL-8B-Instruct',
+  'gacua-qwen3-vl-32b': 'Qwen/Qwen3-VL-32B-Instruct',
 };
 
 const AVAILABLE_MODELS = Object.keys(MODEL_MAP);

@@ -19,6 +19,7 @@ import { Config } from '../config/config.js';
 
 import { UserTierId } from '../code_assist/types.js';
 import { LoggingContentGenerator } from './loggingContentGenerator.js';
+import { OpenAIContentGenerator } from './openaiContentGenerator.js';
 import { getInstallationId } from '../utils/user_id.js';
 
 /**
@@ -47,6 +48,7 @@ export enum AuthType {
   USE_GEMINI = 'gemini-api-key',
   USE_VERTEX_AI = 'vertex-ai',
   CLOUD_SHELL = 'cloud-shell',
+  USE_OPENAI_COMPAT = 'openai-compat',
 }
 
 export type ContentGeneratorConfig = {
@@ -55,6 +57,7 @@ export type ContentGeneratorConfig = {
   vertexai?: boolean;
   authType?: AuthType | undefined;
   proxy?: string | undefined;
+  baseUrl?: string;
 };
 
 export function createContentGeneratorConfig(
@@ -74,6 +77,19 @@ export function createContentGeneratorConfig(
     authType,
     proxy: config?.getProxy(),
   };
+
+  // OpenAI-compatible provider (vLLM, HuggingFace, etc.)
+  if (authType === AuthType.USE_OPENAI_COMPAT) {
+    const openaiBaseUrl = process.env['OPENAI_COMPAT_BASE_URL'] || '';
+    const openaiApiKey = process.env['OPENAI_COMPAT_API_KEY'] || '';
+    const openaiModel = process.env['OPENAI_COMPAT_MODEL'] || '';
+    contentGeneratorConfig.baseUrl = openaiBaseUrl;
+    contentGeneratorConfig.apiKey = openaiApiKey;
+    if (openaiModel) {
+      contentGeneratorConfig.model = openaiModel;
+    }
+    return contentGeneratorConfig;
+  }
 
   // If we are using Google auth or we are in Cloud Shell, there is nothing else to validate for now
   if (
@@ -128,6 +144,19 @@ export async function createContentGenerator(
       ),
       gcConfig,
     );
+  }
+
+  // OpenAI-compatible provider
+  if (config.authType === AuthType.USE_OPENAI_COMPAT) {
+    if (!config.baseUrl) {
+      throw new Error('OPENAI_COMPAT_BASE_URL is required for OpenAI-compatible provider');
+    }
+    const generator = new OpenAIContentGenerator(
+      config.baseUrl,
+      config.apiKey ?? '',
+      config.model,
+    );
+    return new LoggingContentGenerator(generator, gcConfig);
   }
 
   if (

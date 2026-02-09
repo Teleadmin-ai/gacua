@@ -61,6 +61,10 @@ export async function prepareComputerUseConfig(
   });
 
   await config.initialize();
+
+  // refreshAuth creates the GeminiClient + ContentGenerator pipeline.
+  // For OpenAI-compat, createContentGenerator() instantiates OpenAIContentGenerator
+  // instead of Google auth — so this call is safe for all auth types.
   await config.refreshAuth(authType);
 
   agentInterfaceLogger.info(
@@ -356,10 +360,12 @@ export async function runComputerUseAgent(
       emitMetrics,
     );
   } catch (error) {
-    agentInterfaceLogger.error({ error }, 'Internal error while running agent');
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const errStack = error instanceof Error ? error.stack : undefined;
+    agentInterfaceLogger.error({ errMsg, errStack }, 'Internal error while running agent');
     setSessionStatus(
       'error',
-      error instanceof Error ? error.message : String(error),
+      errMsg,
     );
   } finally {
     // Close MCP connections opened during config.initialize() to prevent leaks

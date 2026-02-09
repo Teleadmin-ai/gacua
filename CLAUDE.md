@@ -26,6 +26,8 @@ packages/
 ├── core/              # Coeur Gemini CLI (auth, tools, config, MCP client)
 │   └── src/
 │       ├── core/contentGenerator.ts  # Interface ContentGenerator (abstraction API)
+│       ├── core/openaiContentGenerator.ts  # Adapter OpenAI-compat → Gemini format
+│       ├── core/openaiStreamParser.ts      # Parser SSE streaming OpenAI
 │       ├── core/geminiChat.ts        # Chat session + flash fallback
 │       ├── core/loggingContentGenerator.ts  # Decorator logging
 │       ├── core/prompts.ts           # System prompts
@@ -373,6 +375,126 @@ click app, click 4, click 2, click ×, click 3, click =, computer_done) en ~2 mi
 - Constante `KEEP_RECENT_IMAGES = 3` configurable en haut du fichier
 - Log de diagnostic a chaque tour : `fullImageCount`, `sentImageCount`, `stripped`
 
+### 18. Support multi-provider OpenAI-compatible (Qwen3-VL, Ollama, HuggingFace...)
+
+**Status** : FONCTIONNEL — teste avec Qwen3-VL 8B Q8 sur RTX 4090 via Ollama.
+Premier clic reussi (ouverture menu Start) en 7.5s (vs 44s Gemini Flash = **6x plus rapide**).
+
+- **Fichiers crees** :
+  - `packages/core/src/core/openaiContentGenerator.ts` — Adapter `ContentGenerator` qui traduit
+    requetes Gemini → format OpenAI et reponses OpenAI → format Gemini.
+    Gere aussi les raw `Part[]` (pas seulement `Content[]`) pour le grounding.
+  - `packages/core/src/core/openaiStreamParser.ts` — Parser SSE streaming OpenAI, emet des
+    `GenerateContentResponse` compatibles Gemini
+- **Fichiers modifies** :
+  - `packages/core/src/core/contentGenerator.ts` — `AuthType.USE_OPENAI_COMPAT`, `baseUrl` dans config,
+    factory branch pour `OpenAIContentGenerator`
+  - `packages/gacua/backend/src/auth/gemini.ts` — Auto-detection via `OPENAI_COMPAT_BASE_URL` env var
+  - `packages/gacua/backend/src/services/computer-use/interface.ts` — Toujours appeler `refreshAuth()`
+    (meme pour OpenAI-compat, car ca cree le pipeline ContentGenerator). Error logging ameliore.
+  - `packages/gacua/backend/src/api/openai-compat.ts` — Ajout Qwen3-VL 2B/4B/8B/32B dans `MODEL_MAP`
+  - `packages/gacua/backend/src/services/computer-use/agent.ts` — Swap coordonnees grounding
+    pour modeles non-Gemini (voir section 19)
+- **Activation** : 3 variables d'environnement (sans elles → Gemini classique, aucun changement)
+
+#### Configuration multi-provider
+
+```bash
+# === Ollama local (TESTE — RTX 4090) ===
+OPENAI_COMPAT_BASE_URL=http://localhost:11434/v1
+OPENAI_COMPAT_API_KEY=ollama
+OPENAI_COMPAT_MODEL=qwen3-vl:8b-q8-32k    # Variante 32K context (voir note Ollama)
+
+# === HuggingFace Inference API ===
+OPENAI_COMPAT_BASE_URL=https://router.huggingface.co/v1
+OPENAI_COMPAT_API_KEY=hf_xxxxx
+OPENAI_COMPAT_MODEL=Qwen/Qwen3-VL-8B-Instruct
+
+# === vLLM local (GPU dedie) ===
+OPENAI_COMPAT_BASE_URL=http://localhost:8000/v1
+OPENAI_COMPAT_API_KEY=none
+OPENAI_COMPAT_MODEL=Qwen/Qwen3-VL-8B-Instruct
+
+# === LM Studio ===
+OPENAI_COMPAT_BASE_URL=http://localhost:1234/v1
+OPENAI_COMPAT_API_KEY=lm-studio
+OPENAI_COMPAT_MODEL=qwen3-vl-8b
+```
+
+#### Note Ollama : context length
+
+Ollama default `num_ctx=4096` — **beaucoup trop petit** pour GACUA (3 crops base64 + tools
++ system prompt). Le modele supporte 262K. Creer une variante avec context suffisant :
+
+```bash
+# Creer un modele derive avec 32K context (une seule fois)
+curl -s http://localhost:11434/api/create -d \
+  '{"name":"qwen3-vl:8b-q8-32k","from":"qwen3-vl:8b-instruct-q8_0","parameters":{"num_ctx":32768}}'
+
+# Utiliser ce nom dans OPENAI_COMPAT_MODEL
+```
+
+Sans ca, le modele produit des reponses incoherentes ou tronquees (le context deborde silencieusement).
+
+#### Traductions effectuees par l'adapter
+
+| Gemini (entree)                        | OpenAI (sortie)                      |
+|----------------------------------------|--------------------------------------|
+| `contents: Content[]`                  | `messages: ChatMessage[]`            |
+| `contents: Part[]` (raw, grounding)    | Detecte et wrappe en `Content[]`     |
+| `Content.parts[].inlineData` (base64)  | `image_url` avec data URI            |
+| `config.systemInstruction`             | `messages[0] = {role:"system",...}`  |
+| `config.tools[].functionDeclarations`  | `tools[].{type:"function",...}`      |
+| `config.responseMimeType: json`        | `response_format: {type:"json_object"}` |
+| `config.responseJsonSchema`            | `response_format: {type:"json_schema",...}` |
+| `config.thinkingConfig`               | Ignore (pas supporte par Qwen)       |
+| `choices[0].message.tool_calls`        | `candidates[0].content.parts[{functionCall}]` |
+
+#### Modeles exposes dans l'API
+
+| ID API                 | Modele reel                     |
+|------------------------|---------------------------------|
+| `gacua-gemini-3-pro`   | gemini-3-pro-preview           |
+| `gacua-gemini-3-flash` | gemini-3-flash-preview         |
+| `gacua-qwen3-vl-2b`   | Qwen/Qwen3-VL-2B-Instruct     |
+| `gacua-qwen3-vl-4b`   | Qwen/Qwen3-VL-4B-Instruct     |
+| `gacua-qwen3-vl-8b`   | Qwen/Qwen3-VL-8B-Instruct     |
+| `gacua-qwen3-vl-32b`  | Qwen/Qwen3-VL-32B-Instruct    |
+
+Les noms natifs sont aussi acceptes directement (ex: `qwen3-vl:8b-q8-32k` pour Ollama).
+
+#### Benchmarks (Qwen3-VL 8B Q8 sur RTX 4090 via Ollama)
+
+| Metrique | Qwen3-VL 8B (local) | Gemini Flash (API) |
+|----------|---------------------|-------------------|
+| Planning | ~2.5s | ~7-13s |
+| Grounding | ~1.5s | ~3-5s |
+| Total (1 action + done) | 7.5s | ~44s |
+| Latence reseau | 0ms (localhost) | ~200ms |
+| Cout | 0 (GPU local) | API payante |
+
+#### Limitations connues
+
+- `thoughtSignature` : Gemini 3-specific, retourne `undefined` avec OpenAI-compat
+- `thinkingConfig` : ignore (Qwen n'a pas d'extended thinking)
+- `countTokens` / `embedContent` : stubs (retournent 0 / erreur) — pas utilise par agent.ts
+- Ollama : penser a creer la variante 32K context (voir note ci-dessus)
+
+### 19. Coordinate swap pour modeles non-Gemini (grounding)
+
+**Probleme** : Gemini retourne les bounding boxes en `[ymin, xmin, ymax, xmax]` (convention
+specifique Google). Les modeles standard (Qwen, LLaVA, etc.) retournent en `[xmin, ymin, xmax, ymax]`
+(convention CV standard). Sans swap, le clic atterrit au mauvais endroit (axes x↔y inverses).
+
+**Exemple** : bouton Start (bas-gauche). Qwen retourne `[0, 981, 43, 1000]` = `[xmin=0, ymin=981, ...]`.
+Sans swap → interprete comme `[ymin=0, xmin=981]` = haut-droite. Avec swap → correct.
+
+- **Fichier** : `packages/gacua/backend/src/services/computer-use/agent.ts` (fonction `detectElement`)
+- Detection via `config.getModel().startsWith('gemini')` :
+  - Gemini : coordonnees deja en `[y,x,y,x]`, pas de swap
+  - Autres : swap `[x,y,x,y]` → `[y,x,y,x]`
+- Debug log : `[GROUNDING] model=X isGemini=Y raw=[...] → [ymin=..., xmin=..., ymax=..., xmax=...]`
+
 ## Commandes
 
 ```bash
@@ -640,6 +762,19 @@ La liste ci-dessous est **mise a jour automatiquement par l'API** quand une tach
 | Fichier | Description | Duree | Modele | Session | Date |
 |---------|-------------|-------|--------|---------|------|
 | `recipe_ouvrir-calc-et-42x3_3m27s.md` | ouvrir-calc-et-42x3 | 3m27s | Flash | ouvrir-calc-et-42x3 | 2026-02-08 |
+| `recipe_calc-vers-notepad-copier-resultat_2m23s.md` | calc-vers-notepad-copier-resultat | 2m23s | Flash | calc-vers-notepad-copier-resultat | 2026-02-08 |
+| `recipe_api-1770584064043_39s.md` | api-1770584064043 | 39s | Flash | api-1770584064043 | 2026-02-08 |
+| `recipe_api-1770584349720_5m41s.md` | api-1770584349720 | 5m41s | Flash | api-1770584349720 | 2026-02-08 |
+| `recipe_test-ambitieux-calc-notepad_2m3s.md` | test-ambitieux-calc-notepad | 2m3s | Flash | test-ambitieux-calc-notepad | 2026-02-08 |
+| `recipe_test-timing_5m19s.md` | test-timing | 5m19s | Flash | test-timing | 2026-02-09 |
+| `recipe_test-regression_10s.md` | test-regression | 10s | Flash | test-regression | 2026-02-09 |
+| `recipe_test-qwen3-vl-3_10s.md` | test-qwen3-vl-3 | 10s | qwen3-vl:8b-instruct-q8_0 | test-qwen3-vl-3 | 2026-02-09 |
+| `recipe_api-1770639532529_6s.md` | api-1770639532529 | 6s | qwen3-vl:8b-instruct-q8_0 | api-1770639532529 | 2026-02-09 |
+| `recipe_test-qwen-click_8s.md` | test-qwen-click | 8s | qwen3-vl:8b-instruct-q8_0 | test-qwen-click | 2026-02-09 |
+| `recipe_test-qwen-debug_15s.md` | test-qwen-debug | 15s | qwen3-vl:8b-instruct-q8_0 | test-qwen-debug | 2026-02-09 |
+| `recipe_test-qwen-32k_7s.md` | test-qwen-32k | 7s | qwen3-vl:8b-q8-32k | test-qwen-32k | 2026-02-09 |
+| `recipe_test-grounding_7s.md` | test-grounding | 7s | qwen3-vl:8b-q8-32k | test-grounding | 2026-02-09 |
+| `recipe_test-coord-swap_7s.md` | test-coord-swap | 7s | qwen3-vl:8b-q8-32k | test-coord-swap | 2026-02-09 |
 <!-- RECIPES_END -->
 
 #### Principes des recettes
@@ -780,6 +915,16 @@ Lecture des metrics : le bottleneck est `planningMs` (6-13s = temps de reflexion
   parts a cote de ses function calls. Comportement du modele, pas un bug du code. Pro ne le fait pas.
 - **systemInstruction incompatible avec Flash** : ajouter un `systemInstruction` a l'appel planning
   (avec thinking + function calling) fait hang la requete indefiniment. Les tool descriptions suffisent.
+- **Ollama num_ctx par defaut = 4096** : beaucoup trop petit pour GACUA. Le modele deborde
+  silencieusement et produit du garbage. Toujours creer une variante avec `num_ctx >= 32768`.
+- **Grounding coordinates : Gemini ≠ standard** : Gemini retourne `[y,x,y,x]`, les modeles
+  standard retournent `[x,y,x,y]`. Le swap est gere dans `agent.ts` (section 19).
+  Si un nouveau provider est ajoute, verifier quelle convention il utilise.
+- **refreshAuth() obligatoire pour TOUS les auth types** : meme OpenAI-compat. C'est cette
+  fonction qui cree le pipeline ContentGenerator. Sans elle → `getContentGenerator()` retourne undefined.
+- **Grounding raw Part[]** : l'appel grounding passe `contents: [imagePart, textPart]` (raw Parts,
+  pas Content[]). L'adapter OpenAI detecte et wrappe automatiquement. Si un nouvel adapter est cree,
+  il doit gerer ce cas.
 
 ## Notes
 
@@ -787,4 +932,5 @@ Lecture des metrics : le bottleneck est `planningMs` (6-13s = temps de reflexion
 - Si erreur "EADDRINUSE" : `bash ~/gacua/gacua.sh restart` (tue les processes et relance)
 - Les screenshots sont croppes en carres 768x768 avec 50% de chevauchement
 - Resolution ecran : 3072x1728
-- **~10-20s par tour** : screenshot (~0.5s) + planning (~7-13s) + execution (~3-5s)
+- **Gemini** : ~10-20s par tour (screenshot ~0.5s + planning ~7-13s + execution ~3-5s)
+- **Qwen3-VL 8B local** : ~3-5s par tour (planning ~2.5s + grounding ~1.5s) — 6x plus rapide
