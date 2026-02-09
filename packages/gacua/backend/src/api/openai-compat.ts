@@ -39,6 +39,8 @@ const MODEL_MAP: Record<string, string> = {
   'gacua-qwen3-vl-4b': 'Qwen/Qwen3-VL-4B-Instruct',
   'gacua-qwen3-vl-8b': 'Qwen/Qwen3-VL-8B-Instruct',
   'gacua-qwen3-vl-32b': 'Qwen/Qwen3-VL-32B-Instruct',
+  'gacua-uitars-1.5-7b': 'ui-tars-1.5-7b',
+  'gacua-uitars-2-7b': 'ui-tars-2-7b',
 };
 
 const AVAILABLE_MODELS = Object.keys(MODEL_MAP);

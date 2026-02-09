@@ -495,6 +495,59 @@ Sans swap → interprete comme `[ymin=0, xmin=981]` = haut-droite. Avec swap →
   - Autres : swap `[x,y,x,y]` → `[y,x,y,x]`
 - Debug log : `[GROUNDING] model=X isGemini=Y raw=[...] → [ymin=..., xmin=..., ymax=..., xmax=...]`
 
+### 20. Support UI-TARS (pipeline single-step)
+
+**Status** : IMPLEMENTE — pret a tester avec UI-TARS-1.5-7B via Ollama.
+
+UI-TARS est un modele vision specialise GUI qui fonctionne differemment des modeles function-calling :
+- **1 seul appel** par action (pas de 2eme etape grounding)
+- Le modele retourne du **texte** au format ReAct : `Thought: ... \n Action: click(start_box='(x,y)')`
+- Les **coordonnees sont directement dans la sortie** (normalisees 0-1000)
+- Pas de function calling, pas de tool declarations, pas de crops
+
+**Detection automatique** : active si le nom du modele contient "ui-tars"/"uitars"
+ou si `UITARS_MODE=true` dans l'environnement.
+
+- **Fichier cree** : `packages/gacua/backend/src/services/computer-use/uitars-parser.ts`
+  - `parseUITarsResponse(text)` — parse Thought + Action du texte brut
+  - `uitarsActionToToolCall(action, width, height)` — convertit en appel MCP .computer
+  - `isUITarsModel(name)` — detection par nom de modele
+  - `UITARS_COMPUTER_USE_SYSTEM_PROMPT` — system prompt COMPUTER_USE pour UI-TARS
+- **Fichier modifie** : `packages/gacua/backend/src/services/computer-use/agent.ts`
+  - Branche `if (uitarsMode)` dans la boucle `while(true)` avant le pipeline standard
+  - Envoie le screenshot complet (pas de crops), pas de tool declarations
+  - Parse la reponse texte, convertit les coordonnees, execute directement
+  - `finished()` → equivalent de `computer_done`
+  - `call_user()` → signal d'aide humaine
+- **Fichier modifie** : `packages/gacua/backend/src/api/openai-compat.ts`
+  - Ajout modeles `gacua-uitars-1.5-7b` et `gacua-uitars-2-7b` dans MODEL_MAP
+
+**Pipeline comparaison** :
+```
+Standard (Gemini/Qwen3-VL) :  Screenshot → Crops → Planning (+ tools) → Grounding → Execution
+UI-TARS :                      Screenshot → Planning (texte) → Parse → Execution directe
+```
+
+**Configuration** :
+```bash
+# UI-TARS-1.5-7B via Ollama
+OPENAI_COMPAT_BASE_URL=http://localhost:11434/v1
+OPENAI_COMPAT_API_KEY=ollama
+OPENAI_COMPAT_MODEL=ui-tars-1.5-7b
+
+# Ou forcer le mode UI-TARS sur n'importe quel modele
+UITARS_MODE=true
+```
+
+**Actions supportees** : click, left_double, right_single, drag, hotkey, type, scroll, wait, finished, call_user
+
+**Modeles exposes dans l'API** :
+
+| ID API | Modele reel |
+|--------|-------------|
+| `gacua-uitars-1.5-7b` | ui-tars-1.5-7b |
+| `gacua-uitars-2-7b` | ui-tars-2-7b |
+
 ## Commandes
 
 ```bash
@@ -993,6 +1046,12 @@ Lecture des metrics : le bottleneck est `planningMs` (6-13s = temps de reflexion
 - **Bash variables dans curl headers (Git Bash Windows)** : les variables bash ($TOKEN) sont
   souvent vides dans les headers `-H "Authorization: Bearer $TOKEN"`. Utiliser soit le token
   en dur, soit `python3` avec `urllib.request` pour les appels API fiables.
+- **UI-TARS : pas de function calling** : UI-TARS retourne du texte pur (Thought + Action),
+  pas de tool_calls. Le pipeline UI-TARS dans agent.ts n'envoie pas de tool declarations
+  et parse le texte directement. Ne pas essayer de melanger function calling et UI-TARS.
+- **UI-TARS : coordonnees 0-1000** : les coordonnees dans la sortie UI-TARS sont normalisees
+  0-1000. La conversion en pixels est faite par `uitarsActionToToolCall()` en utilisant
+  la resolution du screenshot. Pas besoin de grounding separé.
 
 ## Notes
 

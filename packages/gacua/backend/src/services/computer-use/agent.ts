@@ -30,6 +30,12 @@ import {
   getValidComputerTool,
   getComputerFunctionDeclarations,
 } from './tool-computer/index.js';
+import {
+  isUITarsModel,
+  parseUITarsResponse,
+  uitarsActionToToolCall,
+  UITARS_COMPUTER_USE_SYSTEM_PROMPT,
+} from './uitars-parser.js';
 import pino from 'pino';
 
 /** Number of recent turns whose screenshot images are kept in context.
@@ -334,6 +340,12 @@ export async function runAgent(
     throw new Error('Core tool .computer not found in registry');
   }
 
+  // Detect UI-TARS mode: single-step pipeline (no grounding, no tool declarations)
+  const uitarsMode = isUITarsModel(config.getModel()) || process.env['UITARS_MODE'] === 'true';
+  if (uitarsMode) {
+    logger.info({ model: config.getModel() }, 'UI-TARS mode enabled — single-step pipeline');
+  }
+
   function forgeToolResponse(
     response: { output: string } | { error: string },
     functionCall: StrictFunctionCall,
@@ -522,9 +534,194 @@ export async function runAgent(
         ).llmContent,
       );
       turnLogger.info({ phase: 'screenshot', durationMs: Date.now() - screenshotStart }, 'Screenshot taken');
+
+      // ── UI-TARS vs standard pipeline divergence ──────────────────────
+      let functionCalls: StrictFunctionCall[] = [];
+      let planningMs: number;
+      // For UI-TARS: we need croppedScreenshotsData for tool execution compatibility
+      let croppedScreenshotsData: { imageFileName: string; imagePart: Part }[] = [];
+
+      if (uitarsMode) {
+        // ── UI-TARS SINGLE-STEP PIPELINE ───────────────────────────────
+        // Send full screenshot (no crops), no tool declarations, parse text output
+        const screenshotImagePart = imageToPart(screenshot);
+        const screenshotFileName = await saveImage(screenshot.buffer, 'screenshot');
+        const screenshotDescription = `Screenshot at ${new Date().toLocaleString()}.`;
+        await persistMessage({
+          role: 'workflow',
+          parts: [
+            { text: screenshotDescription },
+            { imageFileName: screenshotFileName },
+          ],
+          forDisplay: true,
+        });
+        currentParts.push(
+          { text: screenshotDescription },
+          screenshotImagePart,
+        );
+
+        const planStart = Date.now();
+        turnLogger.info('UI-TARS: planning next step (single-step)');
+
+        contextManager.appendContent({ role: 'user', parts: currentParts });
+        const requestContents = contextManager.getStrippedHistory(KEEP_RECENT_IMAGES);
+
+        const responseStream = await contentGenerator.generateContentStream(
+          {
+            model: config.getModel(),
+            contents: requestContents,
+            config: {
+              abortSignal: abortController.signal,
+              // No tools — UI-TARS outputs text actions
+              systemInstruction: UITARS_COMPUTER_USE_SYSTEM_PROMPT,
+              temperature: 0.2,
+            },
+          },
+          '',
+        );
+
+        const result = await processStreamResponse(
+          'model',
+          responseStream,
+          undefined,
+          turnLogger,
+        );
+
+        planningMs = Date.now() - planStart;
+        const fullText = (result.thought ? result.thought + '\n' : '') + (result.output || '');
+        turnLogger.info({ phase: 'planning', durationMs: planningMs, text: fullText.slice(0, 200) }, 'UI-TARS planning completed');
+
+        // Parse UI-TARS text output
+        const parsed = parseUITarsResponse(fullText);
+        turnLogger.info({ thought: parsed.thought, action: parsed.action }, 'UI-TARS parsed response');
+
+        contextManager.appendContent({
+          role: 'model',
+          parts: [{ text: fullText }],
+        });
+
+        if (parsed.action) {
+          if (parsed.action.type === 'finished') {
+            // Task complete
+            const summary = parsed.action.content || parsed.thought || 'Task completed';
+            const totalMs = Date.now() - turnStart;
+            turnLogger.info({ summary, turnDurationMs: totalMs }, 'UI-TARS signaled task completion');
+            turnMetricsList.push({
+              turn: turnCount,
+              screenshotMs: Date.now() - turnStart - planningMs,
+              planningMs,
+              executionMs: 0,
+              totalMs,
+              actions: ['finished'],
+            });
+            setSessionStatus('stagnant', summary);
+            break;
+          }
+
+          if (parsed.action.type === 'call_user') {
+            const totalMs = Date.now() - turnStart;
+            turnMetricsList.push({
+              turn: turnCount,
+              screenshotMs: Date.now() - turnStart - planningMs,
+              planningMs,
+              executionMs: 0,
+              totalMs,
+              actions: ['call_user'],
+            });
+            setSessionStatus('stagnant', 'Model requested human help: ' + parsed.thought);
+            break;
+          }
+
+          // Convert UI-TARS action to GACUA tool call (coordinates already resolved)
+          const toolCall = uitarsActionToToolCall(
+            parsed.action,
+            screenshot.resolution.width,
+            screenshot.resolution.height,
+          );
+
+          if (toolCall) {
+            const execStart = Date.now();
+            const actionId = `uitars-${turnCount}-${Date.now()}`;
+            const requestInfo: ToolCallRequestInfo = {
+              callId: actionId,
+              name: toolCall.name,
+              args: toolCall.args,
+              isClientInitiated: false,
+              prompt_id: '',
+            };
+
+            turnLogger.info({ toolCall, actionId }, 'UI-TARS executing tool call directly');
+
+            const toolResult = await executeToolCall(
+              config,
+              requestInfo,
+              toolRegistry,
+              abortController.signal,
+            );
+
+            const executionMs = Date.now() - execStart;
+            const totalMs = Date.now() - turnStart;
+
+            // Build tool response for context
+            const responseText = toolResult.error
+              ? `Error: ${toolResult.error.message}`
+              : 'Action executed successfully.';
+
+            await persistMessage({
+              role: 'tool',
+              parts: [{ text: responseText }],
+            });
+            contextManager.appendContent({
+              role: 'user',
+              parts: [{ text: responseText }],
+            });
+
+            const actionDesc = `${parsed.action.type}(${parsed.action.startBox ? `${parsed.action.startBox.x},${parsed.action.startBox.y}` : parsed.action.content || parsed.action.key || ''})`;
+            turnMetricsList.push({
+              turn: turnCount,
+              screenshotMs: planStart - turnStart,
+              planningMs,
+              executionMs,
+              totalMs,
+              actions: [actionDesc],
+            });
+
+            turnLogger.info({
+              phase: 'execution',
+              durationMs: executionMs,
+              turnDurationMs: totalMs,
+              action: actionDesc,
+            }, 'UI-TARS tool execution completed');
+
+            currentParts = [{ text: responseText }];
+          } else {
+            turnLogger.warn({ action: parsed.action }, 'UI-TARS action could not be converted to tool call');
+            currentParts = [{ text: 'Action not recognized, please try again.' }];
+          }
+        } else {
+          // No action parsed — model only produced thought
+          turnLogger.warn({ text: fullText.slice(0, 200) }, 'UI-TARS produced no action');
+          const totalMs = Date.now() - turnStart;
+          turnMetricsList.push({
+            turn: turnCount,
+            screenshotMs: planStart - turnStart,
+            planningMs,
+            executionMs: 0,
+            totalMs,
+            actions: [],
+          });
+          setSessionStatus('stagnant', 'Model produced no action.');
+          break;
+        }
+
+        // Continue to next turn (UI-TARS loop)
+        continue;
+      }
+
+      // ── STANDARD TWO-STEP PIPELINE (Gemini / Qwen3-VL) ──────────────
       turnLogger.debug('Cropping screenshot');
       const croppedScreenshots = await cropScreenshot(screenshot);
-      const croppedScreenshotsData = await Promise.all(
+      croppedScreenshotsData = await Promise.all(
         croppedScreenshots.map(
           async ({ image, nameSuffix }) => ({
             imageFileName: await saveImage(image.buffer, nameSuffix),
@@ -559,7 +756,6 @@ export async function runAgent(
 
       const planStart = Date.now();
       turnLogger.info('Planning next step');
-      let functionCalls: StrictFunctionCall[] = [];
 
       async function planNextStep(extraPrompt?: string): Promise<boolean> {
         const userParts = currentParts;
@@ -638,7 +834,7 @@ export async function runAgent(
         }
       }
 
-      const planningMs = Date.now() - planStart;
+      planningMs = Date.now() - planStart;
       turnLogger.info({
         phase: 'planning',
         durationMs: planningMs,
