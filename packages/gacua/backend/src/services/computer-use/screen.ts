@@ -101,14 +101,13 @@ class Screen {
         height: this.cropSquareSideLength,
       };
       const croppedImage = sharp(image.buffer)
-        .extract(cropBox)
-        .resize(768, 768, { fit: 'fill' });
+        .extract(cropBox);
       croppedImages.push(croppedImage);
     }
     return await Promise.all(
       croppedImages.map(async (croppedImage) => ({
         buffer: await croppedImage.toBuffer(),
-        resolution: { width: 768, height: 768 },
+        resolution: { width: this.cropSquareSideLength, height: this.cropSquareSideLength },
         mimeType: 'image/png',
       })),
     );
